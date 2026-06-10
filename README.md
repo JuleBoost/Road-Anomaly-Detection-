@@ -1,6 +1,6 @@
 # 🚗 RoadSense — Road Anomaly Detection System
 
-A real-time road anomaly detection system using a phone camera mounted on a car dashboard. Captures video, extracts frames, and runs YOLOv11s inference to detect road hazards. Detections are stored in Firebase with GPS coordinates and sent as Telegram notifications via n8n automation.
+A real-time road anomaly detection system using a phone camera mounted on a car dashboard. Runs YOLOv11s inference entirely in the browser to detect road hazards. Detections are stored in Firebase with GPS coordinates and sent as Telegram notifications via n8n automation.
 
 ## Detected Anomalies
 - 🕳️ Pothole
@@ -13,9 +13,8 @@ A real-time road anomaly detection system using a phone camera mounted on a car 
 |---|---|
 | Model | YOLOv11s (transfer learning, ONNX export) |
 | Training | Google Colab T4 + Roboflow RoadFix dataset |
-| Backend | FastAPI (Hugging Face Spaces) |
+| Inference | ONNX Runtime Web (browser-based, no backend) |
 | Frontend | React + Leaflet.js (Netlify) |
-| Mobile Prototype | ONNX Runtime Web (browser-based inference) |
 | Database | Firebase Firestore |
 | Notifications | n8n + Telegram Bot |
 
@@ -33,19 +32,19 @@ A real-time road anomaly detection system using a phone camera mounted on a car 
 - Platform: Google Colab (T4 GPU, free tier)
 - Epochs: 100 | Batch: 16 | Image size: 640×640
 - Early stopping patience: 20 epochs
-- Notebook: [`model/RoadSense_Training.ipynb`](model/RoadSense_Training.ipynb)
+- Notebook: [`notebook/RoadSense_Training.ipynb`](notebook/RoadSense_Training.ipynb)
 
 ## Repo Structure
 ```
 /src           → React frontend (dashboard + map view)
 /mobile        → Browser-based prototype (ONNX Runtime Web, no backend needed)
-/model         → Training notebook
+/notebook      → Training notebook
 assets/        → Static assets
 ```
 
 ## Pipeline
 ```
-Phone Camera → FastAPI Backend (HF Spaces) → YOLOv11s Inference → Firebase Firestore → React Dashboard + Telegram Notification (n8n)
+Phone Camera → ONNX Runtime Web (browser) → Firebase Firestore → React Dashboard + Telegram (n8n)
 ```
 
 ## Mobile Prototype
@@ -54,6 +53,7 @@ Runs entirely in the browser — no Python or GPU required.
 - Load `best.onnx` when prompted
 - Use live camera or upload a video file
 - Auto-pauses on hazard detection
+- Detections saved directly to Firestore
 
 ## Notification System
 New Firestore entries in the `anomalies` collection trigger a Telegram message via an n8n polling workflow (no Firebase Cloud Functions required — works on free Spark plan).
@@ -66,13 +66,8 @@ npm install
 npm run dev
 ```
 
-Create a `.env` file based on `.env.example` and add your Firebase config.
-
 ### Mobile Prototype
-Open `mobile/index.html` directly in a browser. No install needed.
-
-### Backend
-Deployed on Hugging Face Spaces (FastAPI). See Space for API docs.
+Open `mobile/index.html` directly in a browser. Place `best.onnx` in the same folder or load it when prompted.
 
 ## License
 MIT
