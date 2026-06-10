@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>RoadSense — Hazard Vision | Pause on Detection</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js"></script>
+<!-- Firebase SDK (modular) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import {
+    getFirestore,
+    collection,
+    addDoc,
+    serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyC-sWBioNBiHdYU-qpRPNEL_d5kB4zNLVQ",
+    authDomain: "roadsense-864cc.firebaseapp.com",
+    projectId: "roadsense-864cc",
+    storageBucket: "roadsense-864cc.firebasestorage.app",
+    messagingSenderId: "63597794880",
+    appId: "1:63597794880:web:4c070d2614d50fa6f331a5"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window.addDetectionToFirestore = async (anomalyType, confidence, lat, lng, address) => {
+    try {
+      const docRef = await addDoc(collection(db, "anomalies"), {
+        anomaly: anomalyType,
+        confidence: confidence,
+        lat: lat,
+        lng: lng,
+        address: address,
+        timestamp: serverTimestamp(),
+        device: "web"
+      });
+
+      console.log("✅ Saved to Firestore:", docRef.id);
+      return true;
+    } catch (err) {
+      console.error("❌ Firestore error:", err);
+      return false;
+    }
+  };
+</script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap');
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background:#000;
+    overflow:hidden;
+    font-family:'Rajdhani', sans-serif;
+    color:#fff;
+    height:100vh;
+    width:100vw;
+  }
+
+  #container { position:relative; width:100vw; height:100vh; }
+
+  #video {
+    width:100%; height:100%;
+    object-fit:cover;
+    display:block;
+  }
+
+  #canvas {
+    position:absolute; top:0; left:0;
+    width:100%; height:100%;
+    pointer-events:none;
+  }
+
+  /* HUD Top Bar */
+  #hud-top {
+    position:absolute; top:0; left:0; right:0;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 18px;
+    background:linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, transparent 100%);
+    z-index:5;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+
+  #logo {
+    font-size:22px; font-weight:700; letter-spacing:2px;
+    color:#fff;
+    white-space:nowrap;
+  }
+  #logo span { color:#ff3c3c; }
+
+  /* mode toggle group */
+  #mode-toggle {
+    display:flex;
+    gap:6px;
+    background:rgba(0,0,0,0.4);
+    backdrop-filter:blur(4px);
+    border-radius:40px;
+    padding:3px;
+  }
+  .mode-btn {
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px; font-weight:600;
+    padding:5px 12px; border-radius:32px;
+    letter-spacing:1px; cursor:pointer;
+    background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.2);
+    color:rgba(255,255,255,0.6);
+    transition:all .2s;
+  }
+  .mode-btn.active {
+    background:rgba(255,60,60,0.25);
+    border-color:#ff3c3c;
+    color:#ff3c3c;
+    box-shadow:0 0 6px rgba(255,60,60,0.3);
+  }
+  .mode-btn:hover {
+    background:rgba(255,60,60,0.15);
+    border-color:#ff5e5e;
+    color:#ff9e9e;
+  }
+
+  /* pause / resume button */
+  #pause-control {
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px; font-weight:600;
+    padding:5px 14px;
+    border-radius:32px;
+    letter-spacing:0.5px;
+    cursor:pointer;
+    background:rgba(0,0,0,0.65);
+    border:1px solid rgba(255,255,255,0.3);
+    color:#eee;
+    transition:all .2s;
+    display:flex;
+    align-items:center;
+    gap:6px;
+    backdrop-filter:blur(5px);
+  }
+  #pause-control:hover {
+    background:#ff3c3c20;
+    border-color:#ff3c3c;
+    color:#ff3c3c;
+  }
+  #pause-control.paused {
+    background:#ff3c3c30;
+    border-color:#ff3c3c;
+    color:#ff3c3c;
+    animation:pulse 1.2s infinite;
+  }
+
+  #status-badge {
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px; font-weight:600;
+    padding:5px 12px; border-radius:4px;
+    letter-spacing:1px; text-transform:uppercase;
+    background:rgba(255,255,255,0.1);
+    border:1px solid rgba(255,255,255,0.15);
+    color:#aaa;
+    transition:all .3s;
+    white-space:nowrap;
+  }
+  #status-badge.ready { color:#4ade80; border-color:#4ade80; background:rgba(74,222,128,0.1); }
+  #status-badge.detecting { color:#ff3c3c; border-color:#ff3c3c; background:rgba(255,60,60,0.1); animation:pulse 1s infinite; }
+  #status-badge.error { color:#f87171; border-color:#f87171; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+  /* Scan line */
+  #scanline {
+    position:absolute; top:0; left:0; right:0;
+    height:2px;
+    background:linear-gradient(to right, transparent, rgba(255,60,60,0.7), transparent);
+    animation:scan 3s linear infinite;
+    pointer-events:none;
+    opacity:0;
+    transition:opacity .5s;
+    z-index:3;
+  }
+  #scanline.active { opacity:1; }
+  @keyframes scan { from{top:0} to{top:100%} }
+
+  /* Corner brackets */
+  .corner {
+    position:absolute; width:28px; height:28px;
+    opacity:0.5;
+    pointer-events:none;
+    z-index:2;
+  }
+  .corner.tl { top:60px; left:18px; border-top:2px solid #ff3c3c; border-left:2px solid #ff3c3c; }
+  .corner.tr { top:60px; right:18px; border-top:2px solid #ff3c3c; border-right:2px solid #ff3c3c; }
+  .corner.bl { bottom:120px; left:18px; border-bottom:2px solid #ff3c3c; border-left:2px solid #ff3c3c; }
+  .corner.br { bottom:120px; right:18px; border-bottom:2px solid #ff3c3c; border-right:2px solid #ff3c3c; }
+
+  /* Bottom Detection Panel */
+  #det-panel {
+    position:absolute; bottom:0; left:0; right:0;
+    padding:16px 18px 28px;
+    background:linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%);
+    min-height:90px;
+    z-index:4;
+  }
+
+  #det-label {
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px; color:rgba(255,255,255,0.35);
+    letter-spacing:2px; margin-bottom:8px;
+    text-transform:uppercase;
+  }
+
+  #det-list { display:flex; flex-wrap:wrap; gap:8px; }
+
+  .det-chip {
+    display:flex; align-items:center; gap:7px;
+    background:rgba(0,0,0,0.6);
+    border:1px solid rgba(255,255,255,0.12);
+    backdrop-filter:blur(10px);
+    padding:6px 12px; border-radius:4px;
+    font-size:15px; font-weight:700; letter-spacing:.5px;
+    animation:chipIn .2s ease;
+  }
+  @keyframes chipIn { from{transform:translateY(8px);opacity:0} to{transform:translateY(0);opacity:1} }
+
+  .det-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+
+  .conf {
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px; font-weight:400;
+    color:rgba(255,255,255,0.5);
+    margin-left:2px;
+  }
+
+  #no-det {
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px; color:rgba(255,255,255,0.25);
+    letter-spacing:1px;
+  }
+
+  /* Loading overlay */
+  #loading {
+    position:absolute; inset:0;
+    background:rgba(0,0,0,0.94);
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:16px; z-index:20;
+    transition:opacity .4s;
+  }
+  #loading.hidden { opacity:0; pointer-events:none; }
+
+  #loading-logo { font-size:36px; font-weight:700; letter-spacing:4px; }
+  #loading-logo span { color:#ff3c3c; }
+
+  #loading-bar-wrap {
+    width:240px; height:3px;
+    background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;
+  }
+  #loading-bar {
+    height:100%; background:#ff3c3c; border-radius:2px;
+    width:0%; transition:width .25s;
+  }
+  #loading-msg {
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px; color:rgba(255,255,255,0.5);
+    letter-spacing:1px;
+  }
+  
+
+  .toast-notify {
+    position:fixed; bottom:100px; left:50%; transform:translateX(-50%);
+    background:#ff3c3c; color:white; padding:8px 16px; border-radius:40px;
+    font-family:'JetBrains Mono', monospace; font-size:12px; z-index:30;
+    pointer-events:none; opacity:0; transition:opacity 0.3s; white-space:nowrap;
+  }
+
+  /* small screen adjustment */
+  @media (max-width: 680px) {
+    .mode-btn { padding:4px 8px; font-size:9px; }
+    #logo { font-size:18px; }
+    #status-badge { font-size:9px; padding:4px 8px; }
+    #pause-control { padding:4px 10px; font-size:10px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div id="loading-logo">ROAD<span>SENSE</span></div>
+  <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+  <div id="loading-msg">LOADING MODEL...</div>
+</div>
+
+<div id="container">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="scanline"></div>
+
+  <div id="hud-top">
+    <div id="logo">ROAD<span>SENSE</span></div>
+    <div id="mode-toggle">
+      <button class="mode-btn active" id="btn-camera">📷 CAMERA</button>
+      <button class="mode-btn" id="btn-upload">📁 VIDEO FILE</button>
+    </div>
+    <button id="pause-control" title="Pause / Resume (auto-pause on detection)">⏸️ PAUSE</button>
+    <div id="status-badge">INITIAL</div>
+  </div>
+  <input type="file" id="video-input" accept="video/*" style="display:none">
+
+  <div class="corner tl"></div>
+  <div class="corner tr"></div>
+  <div class="corner bl"></div>
+  <div class="corner br"></div>
+
+  <div id="det-panel">
+    <div id="det-label">ROAD ANOMALIES</div>
+    <div id="det-list"><div id="no-det">NO ANOMALIES DETECTED</div></div>
+  </div>
+</div>
+<div id="toast-msg" class="toast-notify">⚠️ Detection saved to Firebase</div>
+
+<script>
+// ── CONFIGURATION ──────────────────────────────────────────────────────────
+const MODEL_PATH         = './best.onnx';
+const CONF_THRESHOLD     = 0.40;
+const NMS_IOU_THRESHOLD  = 0.45;
+const INFERENCE_EVERY_MS = 1450;   // smooth detection rate
+const INPUT_SIZE         = 640;
+
+// classes order must match data.yaml (Fallen-Barrier, Fallen-Cone, Fallen-Pole, Pothole)
+const CLASSES = ['Fallen-Barrier', 'Fallen-Cone', 'Fallen-Pole', 'Pothole'];
+const COLORS  = ['#f97316',        '#eab308',     '#a855f7',     '#ef4444'];
+
+// ── GLOBAL STATE ───────────────────────────────────────────────────────────
+let session = null;
+let currentMode = 'camera';        // 'camera' or 'upload'
+let inferenceInterval = null;
+let currentVideoBlobUrl = null;     // track file URL to revoke
+let isUserPaused = false;           // manual pause flag
+let autoPausedOnce = false;         // to avoid spamming pause on same detection loop
+let lastSavedDetectionTime = 0;
+const SAVE_COOLDOWN_MS = 5000;
+
+// DOM elements
+const video    = document.getElementById('video');
+const canvas   = document.getElementById('canvas');
+const ctx      = canvas.getContext('2d');
+const statusEl = document.getElementById('status-badge');
+const detList  = document.getElementById('det-list');
+const loadBar  = document.getElementById('loading-bar');
+const loadMsg  = document.getElementById('loading-msg');
+const loadingEl= document.getElementById('loading');
+const scanline = document.getElementById('scanline');
+const camBtn   = document.getElementById('btn-camera');
+const uploadBtn= document.getElementById('btn-upload');
+const pauseBtn = document.getElementById('pause-control');
+
+// ── HELPER FUNCTIONS ──────────────────────────────────────────────────────
+function setStatus(msg, type = '') {
+  statusEl.textContent = msg;
+  statusEl.className = type;
+}
+
+function setLoadProgress(pct, msg) {
+  loadBar.style.width = pct + '%';
+  loadMsg.textContent = msg;
+}
+
+function showToast(msg) {
+  const toast = document.getElementById('toast-msg');
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  setTimeout(() => { toast.style.opacity = '0'; }, 2000);
+}
+
+function stopAllMediaAndIntervals() {
+  if (inferenceInterval) {
+    clearInterval(inferenceInterval);
+    inferenceInterval = null;
+  }
+  // stop any active media stream (camera)
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(track => track.stop());
+    video.srcObject = null;
+  }
+  // revoke object URL for video file
+  if (currentVideoBlobUrl) {
+    URL.revokeObjectURL(currentVideoBlobUrl);
+    currentVideoBlobUrl = null;
+  }
+  video.src = ''; // clear source
+  video.load();
+  isUserPaused = false;
+  autoPausedOnce = false;
+  updatePauseButtonUI(false);
+}
+
+function resizeCanvas() {
+  if (video.videoWidth && video.videoHeight) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+  } else {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+}
+
+function resetDetectionUI() {
+  if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  detList.innerHTML = '<div id="no-det">NO ANOMALIES DETECTED</div>';
+}
+
+function updateChips(dets) {
+  if (!dets || dets.length === 0) {
+    detList.innerHTML = '<div id="no-det" style="font-family:JetBrains Mono,monospace;font-size:11px;color:rgba(255,255,255,.25);letter-spacing:1px">NO ANOMALIES DETECTED</div>';
+    return;
+  }
+  const groups = {};
+  dets.forEach(d => {
+    if (!groups[d.classId]) groups[d.classId] = { count:0, maxScore:0 };
+    groups[d.classId].count++;
+    groups[d.classId].maxScore = Math.max(groups[d.classId].maxScore, d.score);
+  });
+  detList.innerHTML = Object.entries(groups).map(([id, g]) => `
+    <div class="det-chip">
+      <span class="det-dot" style="background:${COLORS[id]}"></span>
+      ${CLASSES[id]}${g.count>1?` ×${g.count}`:''}
+      <span class="conf">${(g.maxScore*100).toFixed(0)}%</span>
+    </div>
+  `).join('');
+}
+
+function updatePauseButtonUI(paused) {
+  if (paused) {
+    pauseBtn.innerHTML = '▶️ RESUME';
+    pauseBtn.classList.add('paused');
+  } else {
+    pauseBtn.innerHTML = '⏸️ PAUSE';
+    pauseBtn.classList.remove('paused');
+  }
+}
+
+// manual pause/resume
+function togglePlayPause() {
+  if (!video.src || video.readyState < 2) return;
+  if (video.paused) {
+    // resume video
+    video.play().catch(e => console.warn("resume failed", e));
+    isUserPaused = false;
+    autoPausedOnce = false;
+    updatePauseButtonUI(false);
+    setStatus('SCANNING', 'ready');
+  } else {
+    // user manually pause
+    video.pause();
+    isUserPaused = true;
+    autoPausedOnce = false; // reset auto flag
+    updatePauseButtonUI(true);
+    setStatus('PAUSED', 'ready');
+  }
+}
+
+// auto-pause when hazard detected (only if video is playing and not already paused by user)
+function autoPauseOnDetection() {
+  if (!video.src || video.paused) return false;
+  // prevent repetitive pausing for same detection burst
+  if (autoPausedOnce) return false;
+  video.pause();
+  isUserPaused = false;   // not manual but auto pause
+  autoPausedOnce = true;
+  updatePauseButtonUI(true);
+  setStatus('⚠️ HAZARD - PAUSED', 'detecting');
+  return true;
+}
+
+
+// ── GEOCODING & FIREBASE SAVE ──────────────────────────────────────────────
+async function reverseGeocode(lat, lng) {
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+    const data = await response.json();
+    return data.display_name || `${lat}, ${lng}`;
+  } catch (err) {
+    console.warn("Geocoding error:", err);
+    return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  }
+}
+
+async function saveDetectionToFirebase(anomalyType, confidence) {
+  const now = Date.now();
+  if (now - lastSavedDetectionTime < SAVE_COOLDOWN_MS) {
+    console.log("Cooldown, skip save");
+    return;
+  }
+  lastSavedDetectionTime = now;
+
+  if (!navigator.geolocation) {
+    console.warn("Geolocation not supported");
+    showToast("❌ GPS not available");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(async (position) => {
+    const { latitude, longitude } = position.coords;
+    const address = await reverseGeocode(latitude, longitude);
+
+    if (window.addDetectionToFirestore) {
+      const success = await window.addDetectionToFirestore(
+        anomalyType,
+        confidence,
+        latitude,
+        longitude,
+        address
+      );
+
+      if (success) showToast(`✅ Saved: ${anomalyType} (${Math.round(confidence * 100)}%)`);
+      else showToast("❌ Failed to save");
+    } else {
+      console.error("Firestore not ready");
+      showToast("⚠️ Firebase not ready");
+    }
+  }, (err) => {
+    console.error("Geolocation error:", err);
+    showToast("❌ Cannot get location");
+  });
+}
+
+// ── INFERENCE PIPELINE ──────────────────────────────────────────────────────
+function preprocess() {
+  const off = document.createElement('canvas');
+  off.width = off.height = INPUT_SIZE;
+  const offCtx = off.getContext('2d');
+  offCtx.drawImage(video, 0, 0, INPUT_SIZE, INPUT_SIZE);
+  const { data } = offCtx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
+  const N = INPUT_SIZE * INPUT_SIZE;
+  const f = new Float32Array(3 * N);
+  for (let i = 0; i < N; i++) {
+    f[i]         = data[i*4]   / 255;
+    f[N + i]     = data[i*4+1] / 255;
+    f[2*N + i]   = data[i*4+2] / 255;
+  }
+  return new ort.Tensor('float32', f, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+}
+
+function parseOutput(data, shape) {
+  const nc = CLASSES.length;
+  const numOut = 4 + nc;
+  const isTransposed = shape[1] > shape[2];
+  const numAnchors = isTransposed ? shape[1] : shape[2];
+  const dets = [];
+
+  for (let i = 0; i < numAnchors; i++) {
+    const get = j => isTransposed ? data[i * numOut + j] : data[j * numAnchors + i];
+    let maxScore = 0, maxClass = 0;
+    for (let c = 0; c < nc; c++) {
+      const s = get(4 + c);
+      if (s > maxScore) { maxScore = s; maxClass = c; }
+    }
+    if (maxScore < CONF_THRESHOLD) continue;
+    dets.push({
+      cx: get(0) / INPUT_SIZE,
+      cy: get(1) / INPUT_SIZE,
+      w:  get(2) / INPUT_SIZE,
+      h:  get(3) / INPUT_SIZE,
+      score: maxScore,
+      classId: maxClass
+    });
+  }
+  return dets;
+}
+
+function iou(a, b) {
+  const ax1 = a.cx - a.w/2, ay1 = a.cy - a.h/2, ax2 = a.cx + a.w/2, ay2 = a.cy + a.h/2;
+  const bx1 = b.cx - b.w/2, by1 = b.cy - b.h/2, bx2 = b.cx + b.w/2, by2 = b.cy + b.h/2;
+  const ix = Math.max(0, Math.min(ax2, bx2) - Math.max(ax1, bx1));
+  const iy = Math.max(0, Math.min(ay2, by2) - Math.max(ay1, by1));
+  const inter = ix * iy;
+  return inter / (a.w * a.h + b.w * b.h - inter + 1e-6);
+}
+
+function nms(boxes) {
+  boxes.sort((a,b) => b.score - a.score);
+  const keep = [], used = new Set();
+  for (let i = 0; i < boxes.length; i++) {
+    if (used.has(i)) continue;
+    keep.push(boxes[i]);
+    for (let j = i+1; j < boxes.length; j++)
+      if (!used.has(j) && iou(boxes[i], boxes[j]) > NMS_IOU_THRESHOLD) used.add(j);
+  }
+  return keep;
+}
+
+async function runInference() {
+  if (!session || !video || video.readyState < 2 || !video.videoWidth) return;
+  // Even if video is paused we still run inference (to keep annotations on frozen frame)
+  try {
+    const tensor = preprocess();
+    const outName = session.outputNames[0];
+    const inName = session.inputNames[0];
+    const results = await session.run({ [inName]: tensor });
+    const out = results[outName];
+    const detsRaw = parseOutput(out.data, out.dims);
+    const finalDets = nms(detsRaw);
+    drawDetections(finalDets);
+    updateChips(finalDets);
+
+    if (finalDets.length > 0) {
+      const best = finalDets[0];
+      const anomalyType = CLASSES[best.classId];
+      const confidence = best.score;
+      console.log("Detected:", anomalyType, confidence);
+      saveDetectionToFirebase(anomalyType, confidence);
+
+      if (!video.paused && !isUserPaused) {
+        // auto-pause only if video is playing and not already manually paused
+        autoPauseOnDetection();
+        setStatus(`${finalDets.length} DETECTED (PAUSED)`, 'detecting');
+      } else {
+        setStatus(`${finalDets.length} DETECTED`, 'detecting');
+      }
+    } else {
+      if (!video.paused && !isUserPaused && !autoPausedOnce) {
+        setStatus('SCANNING', 'ready');
+      } else if (video.paused && !isUserPaused && autoPausedOnce) {
+        setStatus('PAUSED - HAZARD', 'detecting');
+      } else if (video.paused && isUserPaused) {
+        setStatus('PAUSED', 'ready');
+      } else {
+        setStatus('SCANNING', 'ready');
+      }
+    }
+  } catch (err) {
+    console.warn("[RoadSense] inference glitch:", err);
+  }
+}
+
+function drawDetections(dets) {
+  if (!ctx || !canvas.width || !canvas.height) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const W = canvas.width, H = canvas.height;
+  dets.forEach(d => {
+    const color = COLORS[d.classId];
+    const x = (d.cx - d.w/2) * W, y = (d.cy - d.h/2) * H;
+    const w = d.w * W, h = d.h * H;
+    ctx.fillStyle = color + '28';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.8;
+    ctx.strokeRect(x, y, w, h);
+    const cs = 12;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    [[x,y,1,1],[x+w,y,-1,1],[x,y+h,1,-1],[x+w,y+h,-1,-1]].forEach(([cx,cy,sx,sy]) => {
+      ctx.beginPath();
+      ctx.moveTo(cx + sx*cs, cy);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(cx, cy + sy*cs);
+      ctx.stroke();
+    });
+    const label = CLASSES[d.classId];
+    const confTxt = `${(d.score*100).toFixed(0)}%`;
+    ctx.font = 'bold 14px "Rajdhani", sans-serif';
+    const labelW = ctx.measureText(label).width + ctx.measureText(confTxt).width + 28;
+    const labelH = 26;
+    let labelY = y - labelH - 4;
+    if (labelY < 4) labelY = y + 4;
+    ctx.fillStyle = color;
+    ctx.fillRect(x, labelY, labelW, labelH);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px "Rajdhani", sans-serif';
+    ctx.fillText(label, x+8, labelY+18);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.fillText(confTxt, x+10 + ctx.measureText(label).width+4, labelY+17);
+  });
+}
+
+// ── CAMERA AND MODE SWITCHING ──────────────────────────────────────────────
+async function startCameraOnly() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+  });
+  video.srcObject = stream;
+  await new Promise(resolve => { video.onloadedmetadata = resolve; });
+  resizeCanvas();
+  window.addEventListener('resize', () => resizeCanvas());
+}
+
+async function enableCameraMode() {
+  stopAllMediaAndIntervals();
+  resetDetectionUI();
+  try {
+    await startCameraOnly();
+    if (inferenceInterval) clearInterval(inferenceInterval);
+    inferenceInterval = setInterval(runInference, INFERENCE_EVERY_MS);
+    setStatus('SCANNING', 'ready');
+    scanline.classList.add('active');
+    setTimeout(() => runInference(), 100);
+    // reset pause UI after switching to camera
+    isUserPaused = false;
+    autoPausedOnce = false;
+    updatePauseButtonUI(false);
+  } catch (err) {
+    console.error("Camera error:", err);
+    setStatus('CAMERA FAIL', 'error');
+    scanline.classList.remove('active');
+  }
+}
+
+function setupFileUpload() {
+  const fileInput = document.getElementById('video-input');
+  fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (currentMode !== 'upload') {
+      currentMode = 'upload';
+      camBtn.classList.remove('active');
+      uploadBtn.classList.add('active');
+    }
+    stopAllMediaAndIntervals();
+    resetDetectionUI();
+    const url = URL.createObjectURL(file);
+    currentVideoBlobUrl = url;
+    video.src = url;
+    video.play().catch(e => console.warn("play error:", e));
+    video.onloadedmetadata = () => {
+      resizeCanvas();
+      if (inferenceInterval) clearInterval(inferenceInterval);
+      inferenceInterval = setInterval(runInference, INFERENCE_EVERY_MS);
+      setStatus('SCANNING VIDEO', 'ready');
+      scanline.classList.add('active');
+      runInference();
+      // reset pause state
+      isUserPaused = false;
+      autoPausedOnce = false;
+      updatePauseButtonUI(false);
+    };
+    video.onerror = () => {
+      setStatus('VIDEO ERROR', 'error');
+      scanline.classList.remove('active');
+    };
+  });
+}
+
+async function switchMode(mode) {
+  if (mode === currentMode) return;
+  currentMode = mode;
+  if (mode === 'camera') {
+    camBtn.classList.add('active');
+    uploadBtn.classList.remove('active');
+    await enableCameraMode();
+  } else if (mode === 'upload') {
+    camBtn.classList.remove('active');
+    uploadBtn.classList.add('active');
+    stopAllMediaAndIntervals();
+    resetDetectionUI();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setStatus('SELECT VIDEO', 'ready');
+    scanline.classList.remove('active');
+    document.getElementById('video-input').click();
+  }
+}
+
+// ── MODEL LOADING & INIT ────────────────────────────────────────────────────
+async function loadModel() {
+  try {
+    setLoadProgress(8, "INITIALIZING WASM...");
+    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/';
+    setLoadProgress(28, "FETCHING MODEL...");
+    session = await ort.InferenceSession.create(MODEL_PATH, {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all'
+    });
+    setLoadProgress(65, "MODEL READY");
+    console.log('[RoadSense] model loaded, outputs:', session.outputNames);
+    
+    setLoadProgress(85, "STARTING CAMERA...");
+    currentMode = 'camera';
+    camBtn.classList.add('active');
+    uploadBtn.classList.remove('active');
+    await startCameraOnly();
+    setLoadProgress(100, "READY");
+    setTimeout(() => loadingEl.classList.add('hidden'), 400);
+    setStatus('SCANNING', 'ready');
+    scanline.classList.add('active');
+    if (inferenceInterval) clearInterval(inferenceInterval);
+    inferenceInterval = setInterval(runInference, INFERENCE_EVERY_MS);
+    runInference();
+    // pause UI initialized
+    isUserPaused = false;
+    autoPausedOnce = false;
+    updatePauseButtonUI(false);
+  } catch (err) {
+    console.error('[RoadSense] fatal model load:', err);
+    setLoadProgress(100, "MODEL ERROR: " + err.message.slice(0, 60));
+    setStatus('MODEL FAIL', 'error');
+    loadingEl.classList.add('hidden');
+  }
+}
+
+// attach event listeners
+camBtn.onclick = () => switchMode('camera');
+uploadBtn.onclick = () => switchMode('upload');
+pauseBtn.onclick = () => togglePlayPause();
+setupFileUpload();
+
+window.switchMode = switchMode;
+
+const resizeObserver = new ResizeObserver(() => {
+  if (video.videoWidth) resizeCanvas();
+});
+resizeObserver.observe(video);
+
+loadModel();
+</script>
+</body>
+</html>
