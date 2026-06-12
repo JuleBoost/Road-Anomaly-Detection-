@@ -27,6 +27,71 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
+  const MUNICIPALITIES = [
+    {
+      id: "beirut",
+      name: "Beirut",
+      polygon: [
+        [35.4605, 33.8675],
+        [35.5485, 33.8675],
+        [35.5485, 33.9225],
+        [35.4605, 33.9225],
+        [35.4605, 33.8675],
+      ],
+    },
+    {
+      id: "baabda",
+      name: "Baabda",
+      polygon: [
+        [35.5005, 33.8005],
+        [35.6305, 33.8005],
+        [35.6305, 33.8905],
+        [35.5005, 33.8905],
+        [35.5005, 33.8005],
+      ],
+    },
+    {
+      id: "metn",
+      name: "Metn",
+      polygon: [
+        [35.5655, 33.9005],
+        [35.7355, 33.9005],
+        [35.7355, 34.0305],
+        [35.5655, 34.0305],
+        [35.5655, 33.9005],
+      ],
+    },
+  ];
+
+  function isPointInPolygon(point, polygon) {
+    const [lng, lat] = point;
+    let inside = false;
+
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const [lngI, latI] = polygon[i];
+      const [lngJ, latJ] = polygon[j];
+      const intersects =
+        latI > lat !== latJ > lat &&
+        lng < ((lngJ - lngI) * (lat - latI)) / (latJ - latI) + lngI;
+
+      if (intersects) {
+        inside = !inside;
+      }
+    }
+
+    return inside;
+  }
+
+  function getMunicipality(lat, lng) {
+    for (const municipality of MUNICIPALITIES) {
+      if (isPointInPolygon([lng, lat], municipality.polygon)) {
+        return municipality.id;
+      }
+    }
+
+    return "unknown";
+  }
+
   window.addDetectionToFirestore = async (anomalyType, confidence, lat, lng, address) => {
     try {
       const docRef = await addDoc(collection(db, "anomalies"), {
@@ -35,6 +100,7 @@
         lat: lat,
         lng: lng,
         address: address,
+        municipality_id: getMunicipality(lat, lng),
         timestamp: serverTimestamp(),
         device: "web"
       });
