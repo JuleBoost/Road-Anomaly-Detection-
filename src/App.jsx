@@ -13,6 +13,8 @@ import {
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   Bar,
   BarChart,
@@ -71,6 +73,26 @@ function getMunicipalityDetails(municipalityId) {
     district: municipalityEntry.district_ar,
     governorate: municipalityEntry.governorate_ar,
   };
+}
+
+function formatCreatedDate(timestamp) {
+  if (!timestamp) {
+    return "Unknown";
+  }
+
+  if (typeof timestamp?.toDate === "function") {
+    return timestamp.toDate().toLocaleString();
+  }
+
+  if (timestamp instanceof Date) {
+    return timestamp.toLocaleString();
+  }
+
+  const parsedDate = new Date(timestamp);
+
+  return Number.isNaN(parsedDate.getTime())
+    ? "Unknown"
+    : parsedDate.toLocaleString();
 }
 
 function getCategory(anomaly) {
@@ -145,6 +167,7 @@ function App() {
   const [selectedSeverity, setSelectedSeverity] = useState("All");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [searchText, setSearchText] = useState("");
+  const [exportLoading, setExportLoading] = useState(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -233,6 +256,145 @@ function App() {
       });
     } catch (error) {
       alert("Failed to update status");
+    }
+  };
+
+  const exportRows = filteredAnomalies.map((item) => ({
+    anomaly: item.anomaly || "Other",
+    category: item.category,
+    severity: item.severity,
+    status: item.status,
+    municipality: item.municipality_name || "Unknown",
+    district: item.district || "Unknown",
+    governorate: item.governorate || "Unknown",
+    confidence: `${Math.round((item.confidence || 0) * 100)}%`,
+    reportsCount: item.reports_count || 1,
+    address: item.address || "Unknown location",
+    latitude: item.lat ?? "Unknown",
+    longitude: item.lng ?? "Unknown",
+    createdDate: formatCreatedDate(item.timestamp || item.first_seen_at),
+  }));
+
+  const handleExportCsv = async () => {
+    setExportLoading("csv");
+
+    try {
+      const headers = [
+        "Anomaly",
+        "Category",
+        "Severity",
+        "Status",
+        "Municipality",
+        "District",
+        "Governorate",
+        "Confidence",
+        "Reports Count",
+        "Address",
+        "Latitude",
+        "Longitude",
+        "Created Date",
+      ];
+      const csvRows = exportRows.map((row) =>
+        [
+          row.anomaly,
+          row.category,
+          row.severity,
+          row.status,
+          row.municipality,
+          row.district,
+          row.governorate,
+          row.confidence,
+          row.reportsCount,
+          row.address,
+          row.latitude,
+          row.longitude,
+          row.createdDate,
+        ]
+          .map((value) => `"${String(value).replaceAll('"', '""')}"`)
+          .join(",")
+      );
+      const csvContent = [headers.join(","), ...csvRows].join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = "roadsense-municipality-report.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportLoading(null);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    setExportLoading("pdf");
+
+    try {
+      const pdf = new jsPDF({ orientation: "landscape" });
+      const reportDate = new Date().toLocaleString();
+      const municipalityLabel =
+        userProfile?.role === "municipality"
+          ? userProfile.municipality_id || "Unknown Municipality"
+          : "All Visible Municipalities";
+
+      pdf.setFontSize(18);
+      pdf.text("RoadSense Municipality Report", 14, 18);
+      pdf.setFontSize(11);
+      pdf.text(`Report Date: ${reportDate}`, 14, 28);
+      pdf.text(`Municipality Name: ${municipalityLabel}`, 14, 35);
+      pdf.text(`Total Issues: ${filteredAnomalies.length}`, 14, 42);
+      pdf.text(`Open Issues: ${openIssuesCount}`, 14, 49);
+      pdf.text(`Repaired Issues: ${repairedIssuesCount}`, 14, 56);
+
+      autoTable(pdf, {
+        startY: 64,
+        head: [
+          [
+            "Anomaly",
+            "Category",
+            "Severity",
+            "Status",
+            "Municipality",
+            "District",
+            "Governorate",
+            "Confidence",
+            "Reports Count",
+            "Address",
+            "Latitude",
+            "Longitude",
+            "Created Date",
+          ],
+        ],
+        body: exportRows.map((row) => [
+          row.anomaly,
+          row.category,
+          row.severity,
+          row.status,
+          row.municipality,
+          row.district,
+          row.governorate,
+          row.confidence,
+          row.reportsCount,
+          row.address,
+          row.latitude,
+          row.longitude,
+          row.createdDate,
+        ]),
+        styles: {
+          fontSize: 8,
+          cellPadding: 2,
+        },
+        headStyles: {
+          fillColor: [29, 78, 216],
+        },
+      });
+
+      pdf.save("roadsense-municipality-report.pdf");
+    } finally {
+      setExportLoading(null);
     }
   };
 
@@ -570,6 +732,30 @@ function App() {
               onChange={(e) => setSearchText(e.target.value)}
             />
           </label>
+        </div>
+      </section>
+
+      <section className="panel export-panel">
+        <div className="section-header">
+          <h2>Report Export</h2>
+          <p>Export the currently filtered anomaly list as CSV or PDF.</p>
+        </div>
+
+        <div className="export-actions">
+          <button
+            className="export-btn"
+            onClick={handleExportCsv}
+            disabled={exportLoading !== null || filteredAnomalies.length === 0}
+          >
+            {exportLoading === "csv" ? "Generating CSV..." : "Export CSV"}
+          </button>
+          <button
+            className="export-btn secondary"
+            onClick={handleExportPdf}
+            disabled={exportLoading !== null || filteredAnomalies.length === 0}
+          >
+            {exportLoading === "pdf" ? "Generating PDF..." : "Export PDF"}
+          </button>
         </div>
       </section>
 
