@@ -467,9 +467,17 @@ const NMS_IOU_THRESHOLD  = 0.45;
 const INFERENCE_EVERY_MS = 1450;   // smooth detection rate
 const INPUT_SIZE         = 640;
 
-// classes order must match data.yaml (Fallen-Barrier, Fallen-Cone, Fallen-Pole, Pothole)
-const CLASSES = ['Fallen-Barrier', 'Fallen-Cone', 'Fallen-Pole', 'Pothole'];
-const COLORS  = ['#f97316',        '#eab308',     '#a855f7',     '#ef4444'];
+// classes order must match the future expanded model/data.yaml
+const CLASSES = [
+  'fallen-barrier',
+  'fallen-cone',
+  'fallen-pole',
+  'pothole',
+  'road-crack',
+  'faded-marking',
+  'damaged-traffic-sign'
+];
+const COLORS  = ['#f97316', '#eab308', '#a855f7', '#ef4444', '#fb7185', '#38bdf8', '#22c55e'];
 
 // ── GLOBAL STATE ───────────────────────────────────────────────────────────
 let session = null;
