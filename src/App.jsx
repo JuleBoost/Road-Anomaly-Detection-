@@ -13,7 +13,19 @@ import {
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
+import {
+  Bar,
+  BarChart,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { db, auth } from "./firebase";
+import { findMunicipalityById } from "./utils/municipalityDirectory";
 import MapView from "./MapView";
 import "./App.css";
 
@@ -30,6 +42,39 @@ const TRAFFIC_INFRASTRUCTURE_TYPES = [
   "missing-sign-text",
   "street-light-off",
 ];
+const STATUS_OPTIONS = [
+  "New",
+  "Under Review",
+  "Assigned",
+  "Repaired",
+  "Verified",
+  "Duplicate",
+  "Rejected",
+];
+const CATEGORY_CHART_COLORS = ["#ef4444", "#f97316", "#eab308", "#60a5fa"];
+const UNKNOWN_LOCATION_DETAILS = {
+  municipality_name: "Unknown",
+  district: "Unknown",
+  governorate: "Unknown",
+};
+
+function getMunicipalityDetails(municipalityId) {
+  if (!municipalityId || municipalityId === "unknown") {
+    return UNKNOWN_LOCATION_DETAILS;
+  }
+
+  const municipalityEntry = findMunicipalityById(municipalityId);
+
+  if (!municipalityEntry) {
+    return UNKNOWN_LOCATION_DETAILS;
+  }
+
+  return {
+    municipality_name: municipalityEntry.municipality_name_ar,
+    district: municipalityEntry.district_ar,
+    governorate: municipalityEntry.governorate_ar,
+  };
+}
 
 function getCategory(anomaly) {
   const normalizedAnomaly = anomaly?.toLowerCase?.() ?? "";
@@ -82,6 +127,7 @@ function getSeverity(anomaly) {
 
 function normalizeAnomalyRecord(record) {
   const anomaly = record.anomaly || "Other";
+  const municipalityDetails = getMunicipalityDetails(record.municipality_id);
 
   return {
     ...record,
@@ -90,6 +136,10 @@ function normalizeAnomalyRecord(record) {
     severity: record.severity || getSeverity(anomaly),
     status: record.status || "New",
     reports_count: record.reports_count || 1,
+    municipality_name:
+      record.municipality_name || municipalityDetails.municipality_name,
+    district: record.district || municipalityDetails.district,
+    governorate: record.governorate || municipalityDetails.governorate,
   };
 }
 
@@ -259,7 +309,14 @@ function App() {
       selectedStatus === "All" || item.status === selectedStatus;
     const matchesSearch =
       normalizedSearchText === "" ||
-      [item.anomaly, item.address, item.municipality_id]
+      [
+        item.anomaly,
+        item.address,
+        item.municipality_id,
+        item.municipality_name,
+        item.district,
+        item.governorate,
+      ]
         .filter(Boolean)
         .some((value) =>
           value.toString().toLowerCase().includes(normalizedSearchText)
@@ -275,22 +332,43 @@ function App() {
       ? `Municipality Portal: ${userProfile.municipality_id || "Unassigned"}`
       : "Super Admin View";
 
-  const roadDamageCount = filteredAnomalies.filter(
-    (a) => a.category === "Road Damage"
+  const openIssuesCount = filteredAnomalies.filter(
+    (a) => a.status !== "Repaired" && a.status !== "Rejected"
   ).length;
-  const safetyObjectsCount = filteredAnomalies.filter(
-    (a) => a.category === "Road Safety Objects"
-  ).length;
-  const trafficInfrastructureCount = filteredAnomalies.filter(
-    (a) => a.category === "Traffic Infrastructure"
+  const repairedIssuesCount = filteredAnomalies.filter(
+    (a) => a.status === "Repaired"
   ).length;
   const highSeverityCount = filteredAnomalies.filter(
     (a) => a.severity === "High"
   ).length;
-  const othersCount = filteredAnomalies.filter(
-    (a) => a.category === "Other"
-  ).length;
-
+  const totalReportsCount = filteredAnomalies.reduce(
+    (sum, item) => sum + (item.reports_count || 1),
+    0
+  );
+  const repairProgress =
+    filteredAnomalies.length === 0
+      ? 0
+      : Math.round((repairedIssuesCount / filteredAnomalies.length) * 100);
+  const mostReportedAnomaly = filteredAnomalies.reduce(
+    (highest, item) =>
+      (item.reports_count || 1) > (highest?.reports_count || 0)
+        ? item
+        : highest,
+    null
+  );
+  const categoryChartData = [
+    "Road Damage",
+    "Road Safety Objects",
+    "Traffic Infrastructure",
+    "Other",
+  ].map((category) => ({
+    name: category,
+    value: filteredAnomalies.filter((item) => item.category === category).length,
+  }));
+  const statusChartData = STATUS_OPTIONS.map((status) => ({
+    name: status,
+    value: filteredAnomalies.filter((item) => item.status === status).length,
+  }));
   const latest = filteredAnomalies[0];
 
   return (
@@ -344,36 +422,100 @@ function App() {
 
       <div className="cards">
         <div className="card total">
-          Total Reports
+          Open Issues
           <br />
-          <strong>{filteredAnomalies.length}</strong>
+          <strong>{openIssuesCount}</strong>
         </div>
         <div className="card road-damage">
-          Road Damage
+          Repaired Issues
           <br />
-          <strong>{roadDamageCount}</strong>
+          <strong>{repairedIssuesCount}</strong>
         </div>
         <div className="card safety-objects">
-          Safety Objects
-          <br />
-          <strong>{safetyObjectsCount}</strong>
-        </div>
-        <div className="card traffic-infrastructure">
-          Traffic Infrastructure
-          <br />
-          <strong>{trafficInfrastructureCount}</strong>
-        </div>
-        <div className="card high-severity">
           High Severity
           <br />
           <strong>{highSeverityCount}</strong>
         </div>
-        <div className="card other">
-          Others
+        <div className="card traffic-infrastructure">
+          Total Reports
           <br />
-          <strong>{othersCount}</strong>
+          <strong>{totalReportsCount}</strong>
+        </div>
+        <div className="card high-severity">
+          Repair Progress %
+          <br />
+          <strong>{repairProgress}%</strong>
+        </div>
+        <div className="card other">
+          Most Reported
+          <br />
+          <strong>{mostReportedAnomaly?.anomaly || "N/A"}</strong>
         </div>
       </div>
+
+      <section className="panel charts-panel">
+        <div className="section-header">
+          <h2>Analytics Overview</h2>
+          <p>Live category and workflow insights for the current filtered view.</p>
+        </div>
+
+        <div className="charts-grid">
+          <div className="chart-card">
+            <div className="chart-header">
+              <h3>Category Distribution</h3>
+              <p>Issue categories in the current dashboard scope.</p>
+            </div>
+            <div className="chart-wrapper">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={categoryChartData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={100}
+                    label
+                  >
+                    {categoryChartData.map((entry, index) => (
+                      <Cell
+                        key={entry.name}
+                        fill={CATEGORY_CHART_COLORS[index % CATEGORY_CHART_COLORS.length]}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="chart-card">
+            <div className="chart-header">
+              <h3>Status Distribution</h3>
+              <p>Workflow stages for visible anomalies.</p>
+            </div>
+            <div className="chart-wrapper">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={statusChartData}>
+                  <XAxis
+                    dataKey="name"
+                    stroke="#cbd5e1"
+                    tick={{ fontSize: 12 }}
+                    interval={0}
+                    angle={-15}
+                    textAnchor="end"
+                    height={70}
+                  />
+                  <YAxis stroke="#cbd5e1" tick={{ fontSize: 12 }} allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="value" fill="#60a5fa" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="panel filters-panel">
         <div className="section-header">
@@ -418,13 +560,11 @@ function App() {
               onChange={(e) => setSelectedStatus(e.target.value)}
             >
               <option value="All">All</option>
-              <option value="New">New</option>
-              <option value="Under Review">Under Review</option>
-              <option value="Assigned">Assigned</option>
-              <option value="Repaired">Repaired</option>
-              <option value="Verified">Verified</option>
-              <option value="Duplicate">Duplicate</option>
-              <option value="Rejected">Rejected</option>
+              {STATUS_OPTIONS.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -462,6 +602,9 @@ function App() {
                 <th>Category</th>
                 <th>Severity</th>
                 <th>Status</th>
+                <th>Municipality</th>
+                <th>District</th>
+                <th>Governorate</th>
                 <th>Reports Count</th>
                 <th>Confidence</th>
                 <th>Address</th>
@@ -480,6 +623,9 @@ function App() {
                   <td>{item.category}</td>
                   <td>{item.severity}</td>
                   <td>{item.status}</td>
+                  <td>{item.municipality_name || "Unknown"}</td>
+                  <td>{item.district || "Unknown"}</td>
+                  <td>{item.governorate || "Unknown"}</td>
                   <td>{item.reports_count || 1}</td>
                   <td>{Math.round((item.confidence || 0) * 100)}%</td>
                   <td>{item.address || "Unknown location"}</td>
@@ -493,13 +639,11 @@ function App() {
                         updateAnomalyStatus(item.id, e.target.value)
                       }
                     >
-                      <option value="New">New</option>
-                      <option value="Under Review">Under Review</option>
-                      <option value="Assigned">Assigned</option>
-                      <option value="Repaired">Repaired</option>
-                      <option value="Verified">Verified</option>
-                      <option value="Duplicate">Duplicate</option>
-                      <option value="Rejected">Rejected</option>
+                      {STATUS_OPTIONS.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
                     </select>
                   </td>
                 </tr>
