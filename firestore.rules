@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Require a signed-in Firebase Auth user for any allowed access.
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Load the caller's profile from the users collection.
+    function userProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // Restrict admin access to users explicitly marked as admin.
+    function isAdmin() {
+      return isAuthenticated() && userProfile().data.role == "admin";
+    }
+
+    // Restrict municipality access to users with the municipality role.
+    function isMunicipalityUser() {
+      return isAuthenticated() && userProfile().data.role == "municipality";
+    }
+
+    // Match anomalies to the municipality assigned in the caller's profile.
+    function sameMunicipality(resourceData) {
+      return isMunicipalityUser()
+        && resourceData.municipality_id == userProfile().data.municipality_id;
+    }
+
+    // Municipality users may only change status and updated_at.
+    function municipalityStatusOnlyUpdate() {
+      return request.resource.data.diff(resource.data).changedKeys()
+        .hasOnly(["status", "updated_at"]);
+    }
+
+    match /users/{uid} {
+      // Users may read only their own profile document.
+      allow read: if isAuthenticated() && request.auth.uid == uid;
+
+      // Client apps cannot create, update, or delete user profiles.
+      allow create, update, delete: if false;
+    }
+
+    match /anomalies/{anomalyId} {
+      // Any signed-in client may create anomalies for now.
+      allow create: if isAuthenticated();
+
+      // Admins can read all anomalies; municipality users only their own area.
+      allow read: if isAdmin() || sameMunicipality(resource.data);
+
+      // Admins can update any anomaly; municipality users only status fields in their area.
+      allow update: if isAdmin()
+        || (sameMunicipality(resource.data) && municipalityStatusOnlyUpdate());
+
+      // No client-side deletes are allowed.
+      allow delete: if false;
+    }
+  }
+}

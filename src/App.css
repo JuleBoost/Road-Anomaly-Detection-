@@ -146,19 +146,19 @@ body {
   background: #1d4ed8;
 }
 
-.pothole {
+.road-damage {
   background: #b91c1c;
 }
 
-.cone {
+.safety-objects {
   background: #c2410c;
 }
 
-.barrier {
+.traffic-infrastructure {
   background: #ca8a04;
 }
 
-.pole {
+.high-severity {
   background: #7e22ce;
 }
 
@@ -172,6 +172,56 @@ body {
   border-radius: 20px;
   margin-bottom: 30px;
   box-shadow: 0 15px 35px rgba(0, 0, 0, 0.35);
+}
+
+.filters-panel {
+  border: 1px solid rgba(96, 165, 250, 0.16);
+}
+
+.filters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filter-field span {
+  color: #cbd5e1;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.filter-field select,
+.filter-field input {
+  width: 100%;
+  min-height: 46px;
+  padding: 12px 14px;
+  border: 1px solid #4b5563;
+  border-radius: 12px;
+  background: #111827;
+  color: #f9fafb;
+  font-size: 15px;
+}
+
+.filter-field select:focus,
+.filter-field input:focus {
+  outline: none;
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
+}
+
+.filter-field input::placeholder {
+  color: #9ca3af;
+}
+
+.filter-search {
+  grid-column: span 2;
 }
 
 .section-header h2 {
@@ -218,6 +268,22 @@ tr:hover {
   font-weight: bold;
 }
 
+.table-status-select {
+  min-width: 140px;
+  padding: 10px 12px;
+  border: 1px solid #4b5563;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #f9fafb;
+  font-size: 14px;
+}
+
+.table-status-select:focus {
+  outline: none;
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
+}
+
 @media (max-width: 700px) {
   .navbar,
   .hero,
@@ -234,6 +300,10 @@ tr:hover {
 
   .hero h1 {
     font-size: 28px;
+  }
+
+  .filter-search {
+    grid-column: span 1;
   }
 }
 .login-page {
