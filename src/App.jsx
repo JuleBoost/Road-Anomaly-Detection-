@@ -89,6 +89,7 @@ function normalizeAnomalyRecord(record) {
     category: record.category || getCategory(anomaly),
     severity: record.severity || getSeverity(anomaly),
     status: record.status || "New",
+    reports_count: record.reports_count || 1,
   };
 }
 
@@ -335,6 +336,7 @@ function App() {
               {latest.anomaly || "Other"} detected at{" "}
               {latest.address || "Unknown location"}
             </p>
+            <p>Reported {latest.reports_count || 1} times</p>
           </div>
           <span>{Math.round((latest.confidence || 0) * 100)}%</span>
         </div>
@@ -460,6 +462,7 @@ function App() {
                 <th>Category</th>
                 <th>Severity</th>
                 <th>Status</th>
+                <th>Reports Count</th>
                 <th>Confidence</th>
                 <th>Address</th>
                 <th>Latitude</th>
@@ -477,6 +480,7 @@ function App() {
                   <td>{item.category}</td>
                   <td>{item.severity}</td>
                   <td>{item.status}</td>
+                  <td>{item.reports_count || 1}</td>
                   <td>{Math.round((item.confidence || 0) * 100)}%</td>
                   <td>{item.address || "Unknown location"}</td>
                   <td>{item.lat}</td>

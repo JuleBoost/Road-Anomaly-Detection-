@@ -12,6 +12,9 @@
     getFirestore,
     collection,
     addDoc,
+    doc,
+    getDocs,
+    updateDoc,
     serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
@@ -92,15 +95,83 @@
     return "unknown";
   }
 
+  function normalizeAnomalyType(anomalyType) {
+    return anomalyType.toLowerCase().replace(/\s+/g, "-");
+  }
+
+  function calculateDistanceMeters(lat1, lng1, lat2, lng2) {
+    const toRadians = (value) => (value * Math.PI) / 180;
+    const earthRadiusMeters = 6371000;
+    const deltaLat = toRadians(lat2 - lat1);
+    const deltaLng = toRadians(lng2 - lng1);
+    const lat1Radians = toRadians(lat1);
+    const lat2Radians = toRadians(lat2);
+
+    const a =
+      Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+      Math.cos(lat1Radians) *
+        Math.cos(lat2Radians) *
+        Math.sin(deltaLng / 2) *
+        Math.sin(deltaLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return earthRadiusMeters * c;
+  }
+
   window.addDetectionToFirestore = async (anomalyType, confidence, lat, lng, address) => {
     try {
-      const docRef = await addDoc(collection(db, "anomalies"), {
-        anomaly: anomalyType,
+      const municipalityId = getMunicipality(lat, lng);
+      const normalizedAnomaly = normalizeAnomalyType(anomalyType);
+      const anomaliesRef = collection(db, "anomalies");
+      const existingAnomaliesSnapshot = await getDocs(anomaliesRef);
+
+      const duplicateDoc = existingAnomaliesSnapshot.docs.find((snapshotDoc) => {
+        const existingAnomaly = snapshotDoc.data();
+        const existingStatus = existingAnomaly.status || "New";
+        const existingAnomalyType = normalizeAnomalyType(existingAnomaly.anomaly || "");
+
+        if (existingAnomalyType !== normalizedAnomaly) {
+          return false;
+        }
+
+        if (existingStatus === "Repaired" || existingStatus === "Rejected") {
+          return false;
+        }
+
+        const distanceMeters = calculateDistanceMeters(
+          lat,
+          lng,
+          existingAnomaly.lat,
+          existingAnomaly.lng
+        );
+
+        return distanceMeters <= 10;
+      });
+
+      if (duplicateDoc) {
+        const duplicateData = duplicateDoc.data();
+
+        await updateDoc(doc(db, "anomalies", duplicateDoc.id), {
+          reports_count: (duplicateData.reports_count || 1) + 1,
+          last_seen_at: new Date(),
+          confidence: Math.max(duplicateData.confidence || 0, confidence),
+          municipality_id: duplicateData.municipality_id || municipalityId,
+        });
+
+        console.log("âœ… Updated duplicate anomaly:", duplicateDoc.id);
+        return true;
+      }
+
+      const docRef = await addDoc(anomaliesRef, {
+        anomaly: normalizedAnomaly,
         confidence: confidence,
         lat: lat,
         lng: lng,
         address: address,
-        municipality_id: getMunicipality(lat, lng),
+        municipality_id: municipalityId,
+        reports_count: 1,
+        first_seen_at: new Date(),
+        last_seen_at: new Date(),
         timestamp: serverTimestamp(),
         device: "web"
       });
