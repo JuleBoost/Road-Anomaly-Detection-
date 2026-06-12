@@ -29,7 +29,7 @@ import { findMunicipalityById } from "./utils/municipalityDirectory";
 import MapView from "./MapView";
 import "./App.css";
 
-const ROAD_DAMAGE_TYPES = ["pothole", "road-crack", "faded-marking"];
+const ROAD_DAMAGE_TYPES = ["pothole", "faded-marking"];
 const ROAD_SAFETY_OBJECT_TYPES = [
   "fallen-cone",
   "fallen-barrier",
@@ -37,6 +37,7 @@ const ROAD_SAFETY_OBJECT_TYPES = [
 ];
 const TRAFFIC_INFRASTRUCTURE_TYPES = [
   "damaged-traffic-sign",
+  "damaged-street-light",
 ];
 const STATUS_OPTIONS = [
   "New",
@@ -98,6 +99,7 @@ function getSeverity(anomaly) {
       "pothole",
       "fallen-barrier",
       "fallen-pole",
+      "damaged-street-light",
     ].includes(normalizedAnomaly)
   ) {
     return "High";
@@ -105,7 +107,6 @@ function getSeverity(anomaly) {
 
   if (
     [
-      "road-crack",
       "faded-marking",
       "fallen-cone",
       "damaged-traffic-sign",
