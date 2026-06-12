@@ -13,6 +13,7 @@ import {
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
@@ -26,7 +27,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { db, auth } from "./firebase";
+import { db, auth, storage } from "./firebase";
 import { findMunicipalityById } from "./utils/municipalityDirectory";
 import MapView from "./MapView";
 import "./App.css";
@@ -95,6 +96,25 @@ function formatCreatedDate(timestamp) {
     : parsedDate.toLocaleString();
 }
 
+function toDateInputValue(value) {
+  if (!value) {
+    return "";
+  }
+
+  const parsedDate =
+    typeof value?.toDate === "function"
+      ? value.toDate()
+      : value instanceof Date
+        ? value
+        : new Date(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "";
+  }
+
+  return parsedDate.toISOString().slice(0, 10);
+}
+
 function getCategory(anomaly) {
   const normalizedAnomaly = anomaly?.toLowerCase?.() ?? "";
 
@@ -155,6 +175,10 @@ function normalizeAnomalyRecord(record) {
       record.municipality_name || municipalityDetails.municipality_name,
     district: record.district || municipalityDetails.district,
     governorate: record.governorate || municipalityDetails.governorate,
+    repair_note: record.repair_note || "",
+    repair_photo_url: record.repair_photo_url || "",
+    repair_date: record.repair_date || null,
+    repaired_by: record.repaired_by || "",
   };
 }
 
@@ -168,6 +192,13 @@ function App() {
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [searchText, setSearchText] = useState("");
   const [exportLoading, setExportLoading] = useState(null);
+  const [repairEvidenceTarget, setRepairEvidenceTarget] = useState(null);
+  const [viewEvidenceTarget, setViewEvidenceTarget] = useState(null);
+  const [repairNote, setRepairNote] = useState("");
+  const [repairDate, setRepairDate] = useState("");
+  const [repairedBy, setRepairedBy] = useState("");
+  const [repairPhotoFile, setRepairPhotoFile] = useState(null);
+  const [repairEvidenceLoading, setRepairEvidenceLoading] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -259,142 +290,54 @@ function App() {
     }
   };
 
-  const exportRows = filteredAnomalies.map((item) => ({
-    anomaly: item.anomaly || "Other",
-    category: item.category,
-    severity: item.severity,
-    status: item.status,
-    municipality: item.municipality_name || "Unknown",
-    district: item.district || "Unknown",
-    governorate: item.governorate || "Unknown",
-    confidence: `${Math.round((item.confidence || 0) * 100)}%`,
-    reportsCount: item.reports_count || 1,
-    address: item.address || "Unknown location",
-    latitude: item.lat ?? "Unknown",
-    longitude: item.lng ?? "Unknown",
-    createdDate: formatCreatedDate(item.timestamp || item.first_seen_at),
-  }));
-
-  const handleExportCsv = async () => {
-    setExportLoading("csv");
-
-    try {
-      const headers = [
-        "Anomaly",
-        "Category",
-        "Severity",
-        "Status",
-        "Municipality",
-        "District",
-        "Governorate",
-        "Confidence",
-        "Reports Count",
-        "Address",
-        "Latitude",
-        "Longitude",
-        "Created Date",
-      ];
-      const csvRows = exportRows.map((row) =>
-        [
-          row.anomaly,
-          row.category,
-          row.severity,
-          row.status,
-          row.municipality,
-          row.district,
-          row.governorate,
-          row.confidence,
-          row.reportsCount,
-          row.address,
-          row.latitude,
-          row.longitude,
-          row.createdDate,
-        ]
-          .map((value) => `"${String(value).replaceAll('"', '""')}"`)
-          .join(",")
-      );
-      const csvContent = [headers.join(","), ...csvRows].join("\n");
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-
-      link.href = url;
-      link.download = "roadsense-municipality-report.csv";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } finally {
-      setExportLoading(null);
-    }
+  const openRepairEvidenceModal = (item) => {
+    setRepairEvidenceTarget(item);
+    setRepairNote(item.repair_note || "");
+    setRepairDate(toDateInputValue(item.repair_date));
+    setRepairedBy(item.repaired_by || "");
+    setRepairPhotoFile(null);
   };
 
-  const handleExportPdf = async () => {
-    setExportLoading("pdf");
+  const closeRepairEvidenceModal = () => {
+    setRepairEvidenceTarget(null);
+    setRepairNote("");
+    setRepairDate("");
+    setRepairedBy("");
+    setRepairPhotoFile(null);
+    setRepairEvidenceLoading(false);
+  };
+
+  const handleSaveRepairEvidence = async () => {
+    if (!repairEvidenceTarget) {
+      return;
+    }
+
+    setRepairEvidenceLoading(true);
 
     try {
-      const pdf = new jsPDF({ orientation: "landscape" });
-      const reportDate = new Date().toLocaleString();
-      const municipalityLabel =
-        userProfile?.role === "municipality"
-          ? userProfile.municipality_id || "Unknown Municipality"
-          : "All Visible Municipalities";
+      let repairPhotoUrl = repairEvidenceTarget.repair_photo_url || "";
 
-      pdf.setFontSize(18);
-      pdf.text("RoadSense Municipality Report", 14, 18);
-      pdf.setFontSize(11);
-      pdf.text(`Report Date: ${reportDate}`, 14, 28);
-      pdf.text(`Municipality Name: ${municipalityLabel}`, 14, 35);
-      pdf.text(`Total Issues: ${filteredAnomalies.length}`, 14, 42);
-      pdf.text(`Open Issues: ${openIssuesCount}`, 14, 49);
-      pdf.text(`Repaired Issues: ${repairedIssuesCount}`, 14, 56);
+      if (repairPhotoFile) {
+        const storageRef = ref(
+          storage,
+          `repair-evidence/${repairEvidenceTarget.id}/${Date.now()}-${repairPhotoFile.name}`
+        );
+        await uploadBytes(storageRef, repairPhotoFile);
+        repairPhotoUrl = await getDownloadURL(storageRef);
+      }
 
-      autoTable(pdf, {
-        startY: 64,
-        head: [
-          [
-            "Anomaly",
-            "Category",
-            "Severity",
-            "Status",
-            "Municipality",
-            "District",
-            "Governorate",
-            "Confidence",
-            "Reports Count",
-            "Address",
-            "Latitude",
-            "Longitude",
-            "Created Date",
-          ],
-        ],
-        body: exportRows.map((row) => [
-          row.anomaly,
-          row.category,
-          row.severity,
-          row.status,
-          row.municipality,
-          row.district,
-          row.governorate,
-          row.confidence,
-          row.reportsCount,
-          row.address,
-          row.latitude,
-          row.longitude,
-          row.createdDate,
-        ]),
-        styles: {
-          fontSize: 8,
-          cellPadding: 2,
-        },
-        headStyles: {
-          fillColor: [29, 78, 216],
-        },
+      await updateDoc(doc(db, "anomalies", repairEvidenceTarget.id), {
+        repair_note: repairNote,
+        repair_photo_url: repairPhotoUrl,
+        repair_date: repairDate ? new Date(repairDate) : new Date(),
+        repaired_by: repairedBy || user?.email || "Unknown",
+        updated_at: new Date(),
       });
 
-      pdf.save("roadsense-municipality-report.pdf");
-    } finally {
-      setExportLoading(null);
+      closeRepairEvidenceModal();
+    } catch (error) {
+      alert("Failed to save repair evidence");
+      setRepairEvidenceLoading(false);
     }
   };
 
@@ -524,7 +467,162 @@ function App() {
     name: status,
     value: filteredAnomalies.filter((item) => item.status === status).length,
   }));
+  const exportRows = filteredAnomalies.map((item) => ({
+    anomaly: item.anomaly || "Other",
+    category: item.category,
+    severity: item.severity,
+    status: item.status,
+    municipality: item.municipality_name || "Unknown",
+    district: item.district || "Unknown",
+    governorate: item.governorate || "Unknown",
+    confidence: `${Math.round((item.confidence || 0) * 100)}%`,
+    reportsCount: item.reports_count || 1,
+    address: item.address || "Unknown location",
+    latitude: item.lat ?? "Unknown",
+    longitude: item.lng ?? "Unknown",
+    createdDate: formatCreatedDate(item.timestamp || item.first_seen_at),
+    repairEvidence: item.repair_note
+      ? `Note: ${item.repair_note}`
+      : item.repair_photo_url
+        ? "Photo evidence attached"
+        : "No evidence",
+    repairDate: formatCreatedDate(item.repair_date),
+    repairedBy: item.repaired_by || "Unknown",
+  }));
+  const evidenceSummaryCount = filteredAnomalies.filter(
+    (item) => item.repair_note || item.repair_photo_url || item.repaired_by
+  ).length;
   const latest = filteredAnomalies[0];
+
+  const handleExportCsv = async () => {
+    setExportLoading("csv");
+
+    try {
+      const headers = [
+        "Anomaly",
+        "Category",
+        "Severity",
+        "Status",
+        "Municipality",
+        "District",
+        "Governorate",
+        "Confidence",
+        "Reports Count",
+        "Address",
+        "Latitude",
+        "Longitude",
+        "Created Date",
+      ];
+      const csvRows = exportRows.map((row) =>
+        [
+          row.anomaly,
+          row.category,
+          row.severity,
+          row.status,
+          row.municipality,
+          row.district,
+          row.governorate,
+          row.confidence,
+          row.reportsCount,
+          row.address,
+          row.latitude,
+          row.longitude,
+          row.createdDate,
+        ]
+          .map((value) => `"${String(value).replaceAll('"', '""')}"`)
+          .join(",")
+      );
+      const csvContent = [headers.join(","), ...csvRows].join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = "roadsense-municipality-report.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportLoading(null);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    setExportLoading("pdf");
+
+    try {
+      const pdf = new jsPDF({ orientation: "landscape" });
+      const reportDate = new Date().toLocaleString();
+      const municipalityLabel =
+        userProfile?.role === "municipality"
+          ? userProfile.municipality_id || "Unknown Municipality"
+          : "All Visible Municipalities";
+
+      pdf.setFontSize(18);
+      pdf.text("RoadSense Municipality Report", 14, 18);
+      pdf.setFontSize(11);
+      pdf.text(`Report Date: ${reportDate}`, 14, 28);
+      pdf.text(`Municipality Name: ${municipalityLabel}`, 14, 35);
+      pdf.text(`Total Issues: ${filteredAnomalies.length}`, 14, 42);
+      pdf.text(`Open Issues: ${openIssuesCount}`, 14, 49);
+      pdf.text(`Repaired Issues: ${repairedIssuesCount}`, 14, 56);
+      pdf.text(`Evidence Records: ${evidenceSummaryCount}`, 14, 63);
+
+      autoTable(pdf, {
+        startY: 70,
+        head: [
+          [
+            "Anomaly",
+            "Category",
+            "Severity",
+            "Status",
+            "Municipality",
+            "District",
+            "Governorate",
+            "Confidence",
+            "Reports Count",
+            "Address",
+            "Latitude",
+            "Longitude",
+            "Created Date",
+            "Repair Evidence",
+            "Repair Date",
+            "Repaired By",
+          ],
+        ],
+        body: exportRows.map((row) => [
+          row.anomaly,
+          row.category,
+          row.severity,
+          row.status,
+          row.municipality,
+          row.district,
+          row.governorate,
+          row.confidence,
+          row.reportsCount,
+          row.address,
+          row.latitude,
+          row.longitude,
+          row.createdDate,
+          row.repairEvidence,
+          row.repairDate,
+          row.repairedBy,
+        ]),
+        styles: {
+          fontSize: 7,
+          cellPadding: 2,
+        },
+        headStyles: {
+          fillColor: [29, 78, 216],
+        },
+      });
+
+      pdf.save("roadsense-municipality-report.pdf");
+    } finally {
+      setExportLoading(null);
+    }
+  };
 
   return (
     <div className="app">
@@ -789,6 +887,7 @@ function App() {
                 <th>Address</th>
                 <th>Latitude</th>
                 <th>Longitude</th>
+                <th>Evidence</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -811,12 +910,49 @@ function App() {
                   <td>{item.lat}</td>
                   <td>{item.lng}</td>
                   <td>
+                    <div className="evidence-actions">
+                      {(item.repair_photo_url || item.repair_note || item.repaired_by) && (
+                        <button
+                          className="evidence-btn"
+                          onClick={() => setViewEvidenceTarget(item)}
+                        >
+                          View Evidence
+                        </button>
+                      )}
+                      {userProfile?.role === "municipality" &&
+                        item.status === "Repaired" &&
+                        !(item.repair_photo_url || item.repair_note || item.repaired_by) && (
+                          <button
+                            className="evidence-btn secondary"
+                            onClick={() => openRepairEvidenceModal(item)}
+                          >
+                            Add Repair Evidence
+                          </button>
+                        )}
+                      {!(
+                        (item.repair_photo_url || item.repair_note || item.repaired_by) ||
+                        (userProfile?.role === "municipality" &&
+                          item.status === "Repaired")
+                      ) && <span className="evidence-empty">No evidence</span>}
+                    </div>
+                  </td>
+                  <td>
                     <select
                       className="table-status-select"
                       value={item.status}
-                      onChange={(e) =>
-                        updateAnomalyStatus(item.id, e.target.value)
-                      }
+                      onChange={async (e) => {
+                        await updateAnomalyStatus(item.id, e.target.value);
+
+                        if (
+                          e.target.value === "Repaired" &&
+                          userProfile?.role === "municipality"
+                        ) {
+                          openRepairEvidenceModal({
+                            ...item,
+                            status: "Repaired",
+                          });
+                        }
+                      }}
                     >
                       {STATUS_OPTIONS.map((status) => (
                         <option key={status} value={status}>
@@ -831,6 +967,104 @@ function App() {
           </table>
         </div>
       </section>
+
+      {repairEvidenceTarget && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <div className="modal-header">
+              <h3>Add Repair Evidence</h3>
+              <button
+                className="modal-close"
+                onClick={closeRepairEvidenceModal}
+                disabled={repairEvidenceLoading}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <label className="filter-field">
+                <span>Repair Note</span>
+                <textarea
+                  className="modal-textarea"
+                  value={repairNote}
+                  onChange={(e) => setRepairNote(e.target.value)}
+                  placeholder="Describe the repair work completed"
+                />
+              </label>
+
+              <label className="filter-field">
+                <span>Repair Date</span>
+                <input
+                  type="date"
+                  value={repairDate}
+                  onChange={(e) => setRepairDate(e.target.value)}
+                />
+              </label>
+
+              <label className="filter-field">
+                <span>Repaired By</span>
+                <input
+                  type="text"
+                  value={repairedBy}
+                  onChange={(e) => setRepairedBy(e.target.value)}
+                  placeholder="Municipality team / contractor"
+                />
+              </label>
+
+              <label className="filter-field">
+                <span>Repair Photo</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setRepairPhotoFile(e.target.files?.[0] || null)}
+                />
+              </label>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="export-btn"
+                onClick={handleSaveRepairEvidence}
+                disabled={repairEvidenceLoading}
+              >
+                {repairEvidenceLoading ? "Saving..." : "Save Evidence"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewEvidenceTarget && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <div className="modal-header">
+              <h3>Repair Evidence</h3>
+              <button
+                className="modal-close"
+                onClick={() => setViewEvidenceTarget(null)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {viewEvidenceTarget.repair_photo_url ? (
+                <img
+                  className="evidence-image"
+                  src={viewEvidenceTarget.repair_photo_url}
+                  alt="Repair evidence"
+                />
+              ) : (
+                <p className="evidence-empty">No repair photo uploaded.</p>
+              )}
+              <p><strong>Repair Note:</strong> {viewEvidenceTarget.repair_note || "None"}</p>
+              <p><strong>Repair Date:</strong> {formatCreatedDate(viewEvidenceTarget.repair_date)}</p>
+              <p><strong>Repaired By:</strong> {viewEvidenceTarget.repaired_by || "Unknown"}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
