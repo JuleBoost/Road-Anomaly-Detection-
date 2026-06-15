@@ -3,7 +3,8 @@ import {
   collection,
   doc,
   getDoc,
-  onSnapshot,
+  getDocs,
+  limit,
   orderBy,
   query,
   updateDoc,
@@ -217,6 +218,7 @@ function App() {
   const [selectedSeverity, setSelectedSeverity] = useState("All");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [searchText, setSearchText] = useState("");
+  const [loadingAnomalies, setLoadingAnomalies] = useState(false);
   const [exportLoading, setExportLoading] = useState(null);
   const [repairEvidenceTarget, setRepairEvidenceTarget] = useState(null);
   const [viewEvidenceTarget, setViewEvidenceTarget] = useState(null);
@@ -280,19 +282,7 @@ function App() {
   useEffect(() => {
     if (!user) return;
 
-    const q = query(collection(db, "anomalies"), orderBy("timestamp", "desc"));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) =>
-        normalizeAnomalyRecord({
-          id: doc.id,
-          ...doc.data(),
-        })
-      );
-      setAnomalies(data);
-    });
-
-    return () => unsubscribe();
+    fetchAnomalies();
   }, [user]);
 
   useEffect(() => {
@@ -315,6 +305,34 @@ function App() {
     setAnomalies([]);
     setUserProfile(null);
     setLoadingProfile(false);
+    setLoadingAnomalies(false);
+  };
+
+  const fetchAnomalies = async () => {
+    if (!user) {
+      return;
+    }
+
+    setLoadingAnomalies(true);
+
+    try {
+      const anomaliesQuery = query(
+        collection(db, "anomalies"),
+        orderBy("timestamp", "desc"),
+        limit(100)
+      );
+      const snapshot = await getDocs(anomaliesQuery);
+      const data = snapshot.docs.map((doc) =>
+        normalizeAnomalyRecord({
+          id: doc.id,
+          ...doc.data(),
+        })
+      );
+
+      setAnomalies(data);
+    } finally {
+      setLoadingAnomalies(false);
+    }
   };
 
   const updateAnomalyStatus = async (anomalyId, newStatus) => {
@@ -820,11 +838,20 @@ function App() {
       </section>
 
       <section className="panel filters-panel">
-        <div className="section-header">
-          <h2>Dashboard Filters</h2>
-          <p>
-            Showing {filteredAnomalies.length} of {visibleAnomalies.length} reports
-          </p>
+        <div className="section-header section-header-actions">
+          <div>
+            <h2>Dashboard Filters</h2>
+            <p>
+              Showing {filteredAnomalies.length} of {visibleAnomalies.length} reports
+            </p>
+          </div>
+          <button
+            className="refresh-btn"
+            onClick={fetchAnomalies}
+            disabled={loadingAnomalies}
+          >
+            {loadingAnomalies ? "Refreshing..." : "Refresh Data"}
+          </button>
         </div>
 
         <div className="filters-grid">
