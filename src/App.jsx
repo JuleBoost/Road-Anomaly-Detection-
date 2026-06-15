@@ -53,32 +53,6 @@ const STATUS_OPTIONS = [
   "Rejected",
 ];
 const CATEGORY_CHART_COLORS = ["#ef4444", "#f97316", "#eab308", "#60a5fa"];
-const QA_CHECKLIST_GROUPS = [
-  {
-    title: "Authentication",
-    tests: ["Admin login", "Municipality login"],
-  },
-  {
-    title: "Municipality Routing",
-    tests: ["Municipality filtering", "Unknown municipality handling"],
-  },
-  {
-    title: "Dashboard",
-    tests: ["Filters", "Cards", "Analytics", "Map markers"],
-  },
-  {
-    title: "Workflow",
-    tests: ["Status update", "Repair evidence upload", "Evidence viewer"],
-  },
-  {
-    title: "Reports",
-    tests: ["PDF export", "CSV export"],
-  },
-  {
-    title: "Data",
-    tests: ["Deduplication", "Reports count", "GPS assignment"],
-  },
-];
 const UNKNOWN_LOCATION_DETAILS = {
   municipality_name: "Unknown",
   district: "Unknown",
@@ -227,15 +201,6 @@ function App() {
   const [repairedBy, setRepairedBy] = useState("");
   const [repairPhotoFile, setRepairPhotoFile] = useState(null);
   const [repairEvidenceLoading, setRepairEvidenceLoading] = useState(false);
-  const [qaResults, setQaResults] = useState(() => {
-    try {
-      const storedResults = localStorage.getItem("roadsense-qa-results");
-
-      return storedResults ? JSON.parse(storedResults) : {};
-    } catch (error) {
-      return {};
-    }
-  });
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -284,10 +249,6 @@ function App() {
 
     fetchAnomalies();
   }, [user]);
-
-  useEffect(() => {
-    localStorage.setItem("roadsense-qa-results", JSON.stringify(qaResults));
-  }, [qaResults]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -549,16 +510,6 @@ function App() {
   const evidenceSummaryCount = filteredAnomalies.filter(
     (item) => item.repair_note || item.repair_photo_url || item.repaired_by
   ).length;
-  const totalQaTests = QA_CHECKLIST_GROUPS.reduce(
-    (sum, group) => sum + group.tests.length,
-    0
-  );
-  const passedQaTests = Object.values(qaResults).filter(
-    (result) => result === "pass"
-  ).length;
-  const qaCompletionPercentage =
-    totalQaTests === 0 ? 0 : Math.round((passedQaTests / totalQaTests) * 100);
-  const allQaTestsPassed = passedQaTests === totalQaTests && totalQaTests > 0;
   const latest = filteredAnomalies[0];
 
   const handleExportCsv = async () => {
@@ -930,63 +881,6 @@ function App() {
           >
             {exportLoading === "pdf" ? "Generating PDF..." : "Export PDF"}
           </button>
-        </div>
-      </section>
-
-      <section className="panel qa-panel">
-        <div className="section-header">
-          <h2>System Testing</h2>
-          <p>
-            Completion: {qaCompletionPercentage}% ({passedQaTests}/{totalQaTests} passed)
-          </p>
-        </div>
-
-        {allQaTestsPassed && (
-          <div className="qa-ready-banner">System Ready for Deployment</div>
-        )}
-
-        <div className="qa-grid">
-          {QA_CHECKLIST_GROUPS.map((group) => (
-            <div key={group.title} className="qa-card">
-              <h3>{group.title}</h3>
-              <div className="qa-test-list">
-                {group.tests.map((testName) => {
-                  const testKey = `${group.title}:${testName}`;
-                  const result = qaResults[testKey] || null;
-
-                  return (
-                    <div key={testKey} className="qa-test-row">
-                      <span>{testName}</span>
-                      <div className="qa-actions">
-                        <button
-                          className={`qa-btn ${result === "pass" ? "active-pass" : ""}`}
-                          onClick={() =>
-                            setQaResults((current) => ({
-                              ...current,
-                              [testKey]: "pass",
-                            }))
-                          }
-                        >
-                          Pass
-                        </button>
-                        <button
-                          className={`qa-btn ${result === "fail" ? "active-fail" : ""}`}
-                          onClick={() =>
-                            setQaResults((current) => ({
-                              ...current,
-                              [testKey]: "fail",
-                            }))
-                          }
-                        >
-                          Fail
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
         </div>
       </section>
 
