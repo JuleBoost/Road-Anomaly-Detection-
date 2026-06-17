@@ -279,22 +279,43 @@ function App() {
     setLoadingAnomalies(true);
 
     try {
+      const collectionName = "anomalies";
       const anomaliesQuery = query(
-        collection(db, "anomalies"),
+        collection(db, collectionName),
         orderBy("timestamp", "desc"),
         limit(100)
       );
       let snapshot = await getDocs(anomaliesQuery);
+
+      console.log("[RoadSense Debug] Firestore project ID:", db.app.options.projectId);
+      console.log("[RoadSense Debug] Collection queried:", collectionName);
+      console.log("[RoadSense Debug] Documents returned:", snapshot.size);
+      console.log(
+        "[RoadSense Debug] First document ID:",
+        snapshot.docs[0]?.id || "None"
+      );
+      console.log(
+        "[RoadSense Debug] First document data:",
+        snapshot.docs[0]?.data?.() || null
+      );
 
       console.log(
         `[RoadSense] Fetched ${snapshot.size} anomalies with timestamp query`
       );
 
       if (snapshot.empty) {
-        const legacyFallbackQuery = query(collection(db, "anomalies"), limit(100));
+        const legacyFallbackQuery = query(collection(db, collectionName), limit(100));
         snapshot = await getDocs(legacyFallbackQuery);
         console.log(
           `[RoadSense] Fetched ${snapshot.size} legacy anomalies with fallback query`
+        );
+        console.log(
+          "[RoadSense Debug] Fallback first document ID:",
+          snapshot.docs[0]?.id || "None"
+        );
+        console.log(
+          "[RoadSense Debug] Fallback first document data:",
+          snapshot.docs[0]?.data?.() || null
         );
       }
 
@@ -436,6 +457,12 @@ function App() {
         )
       : anomalies;
 
+  console.log("[RoadSense Debug] Anomalies before filtering:", anomalies.length);
+  console.log(
+    "[RoadSense Debug] Anomalies after admin/municipality filtering:",
+    visibleAnomalies.length
+  );
+
   const normalizedSearchText = searchText.trim().toLowerCase();
   const filteredAnomalies = visibleAnomalies.filter((item) => {
     const matchesCategory =
@@ -463,6 +490,11 @@ function App() {
       matchesCategory && matchesSeverity && matchesStatus && matchesSearch
     );
   });
+
+  console.log(
+    "[RoadSense Debug] Anomalies after dashboard filters:",
+    filteredAnomalies.length
+  );
 
   const portalLabel =
     userProfile?.role === "municipality"
@@ -713,6 +745,17 @@ function App() {
       )}
 
       <div className="cards">
+        <div className="card other">
+          Debug
+          <br />
+          <strong>{anomalies.length}</strong>
+          <div className="debug-card-meta">
+            <span>Fetched Docs: {anomalies.length}</span>
+            <span>Visible Docs: {visibleAnomalies.length}</span>
+            <span>User Role: {userProfile?.role || "Unknown"}</span>
+            <span>Municipality ID: {userProfile?.municipality_id || "Unknown"}</span>
+          </div>
+        </div>
         <div className="card total">
           Open Issues
           <br />
