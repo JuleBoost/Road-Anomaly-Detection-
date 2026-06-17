@@ -382,6 +382,10 @@ function App() {
 
   const updateAnomalyStatus = async (anomalyId, newStatus) => {
     try {
+      console.log("[RoadSense] Status update starting:", {
+        anomalyId,
+        newStatus,
+      });
       const anomalyRef = doc(db, "anomalies", anomalyId);
       await updateDoc(anomalyRef, {
         status: newStatus,
@@ -398,7 +402,16 @@ function App() {
             : item
         )
       );
+      console.log("[RoadSense] Status update succeeded:", {
+        anomalyId,
+        newStatus,
+      });
     } catch (error) {
+      console.error("[RoadSense] Status update failed:", {
+        anomalyId,
+        newStatus,
+        error,
+      });
       alert("Failed to update status");
     }
   };
@@ -617,7 +630,9 @@ function App() {
     (item) => item.repair_note || item.repair_photo_url || item.repaired_by
   ).length;
   const latest = filteredAnomalies[0];
-  const paginatedAnomalies = filteredAnomalies.slice(0, visibleRowsCount);
+  const visibleCount = Math.min(visibleRowsCount, filteredAnomalies.length);
+  const visibleTableAnomalies = filteredAnomalies.slice(0, visibleCount);
+  const canShowMore = filteredAnomalies.length > visibleCount;
 
   const handleExportCsv = async () => {
     setExportLoading("csv");
@@ -1038,7 +1053,7 @@ function App() {
             </thead>
 
             <tbody>
-              {paginatedAnomalies.map((item) => (
+              {visibleTableAnomalies.map((item) => (
                 <tr key={item.id}>
                   <td>
                     <span className="badge">{item.anomaly || "Other"}</span>
@@ -1104,7 +1119,7 @@ function App() {
                   <td>
                     <select
                       className="table-status-select"
-                      value={item.status}
+                      value={item.status || "New"}
                       onChange={async (e) => {
                         await updateAnomalyStatus(item.id, e.target.value);
 
@@ -1131,9 +1146,10 @@ function App() {
             </tbody>
           </table>
         </div>
-        {visibleRowsCount < filteredAnomalies.length && (
+        {canShowMore && (
           <div className="show-more-wrap">
             <button
+              type="button"
               className="show-more-btn"
               onClick={() => setVisibleRowsCount((current) => current + 10)}
             >
