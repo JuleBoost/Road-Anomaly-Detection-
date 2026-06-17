@@ -85,22 +85,39 @@ function getMunicipalityDetails(municipalityId) {
   };
 }
 
+function resolveDateValue(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value?.toDate === "function") {
+    const timestampDate = value.toDate();
+
+    return Number.isNaN(timestampDate.getTime()) ? null : timestampDate;
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  const parsedDate = new Date(value);
+
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+}
+
+function getAnomalyDate(anomaly) {
+  return (
+    resolveDateValue(anomaly?.timestamp) ||
+    resolveDateValue(anomaly?.created_at) ||
+    resolveDateValue(anomaly?.first_seen_at) ||
+    resolveDateValue(anomaly?.last_seen_at)
+  );
+}
+
 function formatCreatedDate(timestamp) {
-  if (!timestamp) {
-    return "Unknown";
-  }
+  const parsedDate = resolveDateValue(timestamp);
 
-  if (typeof timestamp?.toDate === "function") {
-    return timestamp.toDate().toLocaleString();
-  }
-
-  if (timestamp instanceof Date) {
-    return timestamp.toLocaleString();
-  }
-
-  const parsedDate = new Date(timestamp);
-
-  return Number.isNaN(parsedDate.getTime())
+  return parsedDate === null
     ? "Unknown"
     : parsedDate.toLocaleString();
 }
@@ -367,9 +384,8 @@ function App() {
           ...doc.data(),
         })
       ).sort((first, second) => {
-        const firstTimestamp = first.timestamp?.toDate?.() || new Date(first.timestamp || 0);
-        const secondTimestamp =
-          second.timestamp?.toDate?.() || new Date(second.timestamp || 0);
+        const firstTimestamp = getAnomalyDate(first)?.getTime() || 0;
+        const secondTimestamp = getAnomalyDate(second)?.getTime() || 0;
 
         return secondTimestamp - firstTimestamp;
       });
@@ -617,7 +633,7 @@ function App() {
     address: item.address || "Unknown location",
     latitude: item.lat ?? "Unknown",
     longitude: item.lng ?? "Unknown",
-    createdDate: formatCreatedDate(item.timestamp || item.first_seen_at),
+    createdDate: formatCreatedDate(getAnomalyDate(item)),
     repairEvidence: item.repair_note
       ? `Note: ${item.repair_note}`
       : item.repair_photo_url
