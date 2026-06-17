@@ -163,11 +163,13 @@ function getSeverity(anomaly) {
 
 function normalizeAnomalyRecord(record) {
   const anomaly = record.anomaly || "Other";
-  const municipalityDetails = getMunicipalityDetails(record.municipality_id);
+  const municipalityId = record.municipality_id || "unknown";
+  const municipalityDetails = getMunicipalityDetails(municipalityId);
 
   return {
     ...record,
     anomaly,
+    municipality_id: municipalityId,
     category: record.category || getCategory(anomaly),
     severity: record.severity || getSeverity(anomaly),
     status: record.status || "New",
@@ -282,13 +284,32 @@ function App() {
         orderBy("timestamp", "desc"),
         limit(100)
       );
-      const snapshot = await getDocs(anomaliesQuery);
+      let snapshot = await getDocs(anomaliesQuery);
+
+      console.log(
+        `[RoadSense] Fetched ${snapshot.size} anomalies with timestamp query`
+      );
+
+      if (snapshot.empty) {
+        const legacyFallbackQuery = query(collection(db, "anomalies"), limit(100));
+        snapshot = await getDocs(legacyFallbackQuery);
+        console.log(
+          `[RoadSense] Fetched ${snapshot.size} legacy anomalies with fallback query`
+        );
+      }
+
       const data = snapshot.docs.map((doc) =>
         normalizeAnomalyRecord({
           id: doc.id,
           ...doc.data(),
         })
-      );
+      ).sort((first, second) => {
+        const firstTimestamp = first.timestamp?.toDate?.() || new Date(first.timestamp || 0);
+        const secondTimestamp =
+          second.timestamp?.toDate?.() || new Date(second.timestamp || 0);
+
+        return secondTimestamp - firstTimestamp;
+      });
 
       setAnomalies(data);
     } finally {
