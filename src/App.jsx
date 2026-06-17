@@ -52,6 +52,14 @@ const STATUS_OPTIONS = [
   "Duplicate",
   "Rejected",
 ];
+const ACTION_STATUS_OPTIONS = [
+  "New",
+  "Under Review",
+  "Assigned",
+  "Repaired",
+  "Verified",
+  "Rejected",
+];
 const CATEGORY_CHART_COLORS = ["#ef4444", "#f97316", "#eab308", "#60a5fa"];
 const UNKNOWN_LOCATION_DETAILS = {
   municipality_name: "Unknown",
@@ -95,6 +103,27 @@ function formatCreatedDate(timestamp) {
   return Number.isNaN(parsedDate.getTime())
     ? "Unknown"
     : parsedDate.toLocaleString();
+}
+
+function getShortAddress(address) {
+  if (!address) {
+    return "Unknown location";
+  }
+
+  const parts = address
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 3) {
+    return `${parts[parts.length - 3]}, ${parts[parts.length - 2]}`;
+  }
+
+  if (parts.length >= 2) {
+    return `${parts[parts.length - 2]}, ${parts[parts.length - 1]}`;
+  }
+
+  return parts[0] || address;
 }
 
 function toDateInputValue(value) {
@@ -194,6 +223,7 @@ function App() {
   const [selectedSeverity, setSelectedSeverity] = useState("All");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [searchText, setSearchText] = useState("");
+  const [visibleRowsCount, setVisibleRowsCount] = useState(10);
   const [loadingAnomalies, setLoadingAnomalies] = useState(false);
   const [exportLoading, setExportLoading] = useState(null);
   const [repairEvidenceTarget, setRepairEvidenceTarget] = useState(null);
@@ -251,6 +281,18 @@ function App() {
 
     fetchAnomalies();
   }, [user]);
+
+  useEffect(() => {
+    setVisibleRowsCount(10);
+  }, [
+    selectedCategory,
+    selectedSeverity,
+    selectedStatus,
+    searchText,
+    anomalies.length,
+    userProfile?.role,
+    userProfile?.municipality_id,
+  ]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -345,6 +387,17 @@ function App() {
         status: newStatus,
         updated_at: new Date(),
       });
+      setAnomalies((current) =>
+        current.map((item) =>
+          item.id === anomalyId
+            ? {
+                ...item,
+                status: newStatus,
+                updated_at: new Date(),
+              }
+            : item
+        )
+      );
     } catch (error) {
       alert("Failed to update status");
     }
@@ -564,6 +617,7 @@ function App() {
     (item) => item.repair_note || item.repair_photo_url || item.repaired_by
   ).length;
   const latest = filteredAnomalies[0];
+  const paginatedAnomalies = filteredAnomalies.slice(0, visibleRowsCount);
 
   const handleExportCsv = async () => {
     setExportLoading("csv");
@@ -984,7 +1038,7 @@ function App() {
             </thead>
 
             <tbody>
-              {filteredAnomalies.map((item) => (
+              {paginatedAnomalies.map((item) => (
                 <tr key={item.id}>
                   <td>
                     <span className="badge">{item.anomaly || "Other"}</span>
@@ -997,7 +1051,27 @@ function App() {
                   <td>{item.governorate || "Unknown"}</td>
                   <td>{item.reports_count || 1}</td>
                   <td>{Math.round((item.confidence || 0) * 100)}%</td>
-                  <td>{item.address || "Unknown location"}</td>
+                  <td>
+                    <div className="address-cell">
+                      <a
+                        className="address-link"
+                        href={`https://www.google.com/maps?q=${item.lat},${item.lng}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={item.address || "Unknown location"}
+                      >
+                        {getShortAddress(item.address)}
+                      </a>
+                      <a
+                        className="maps-btn"
+                        href={`https://www.google.com/maps?q=${item.lat},${item.lng}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open in Maps
+                      </a>
+                    </div>
+                  </td>
                   <td>{item.lat}</td>
                   <td>{item.lng}</td>
                   <td>
@@ -1045,7 +1119,7 @@ function App() {
                         }
                       }}
                     >
-                      {STATUS_OPTIONS.map((status) => (
+                      {ACTION_STATUS_OPTIONS.map((status) => (
                         <option key={status} value={status}>
                           {status}
                         </option>
@@ -1057,6 +1131,16 @@ function App() {
             </tbody>
           </table>
         </div>
+        {visibleRowsCount < filteredAnomalies.length && (
+          <div className="show-more-wrap">
+            <button
+              className="show-more-btn"
+              onClick={() => setVisibleRowsCount((current) => current + 10)}
+            >
+              Show More
+            </button>
+          </div>
+        )}
       </section>
 
       {repairEvidenceTarget && (
