@@ -7,6 +7,7 @@ import {
   limit,
   orderBy,
   query,
+  startAfter,
   updateDoc,
 } from "firebase/firestore";
 import {
@@ -61,6 +62,9 @@ const ACTION_STATUS_OPTIONS = [
   "Rejected",
 ];
 const CATEGORY_CHART_COLORS = ["#ef4444", "#f97316", "#eab308", "#60a5fa"];
+const ANOMALIES_PAGE_SIZE = 10;
+const UNKNOWN_ANOMALY_LABEL = "Unknown Anomaly";
+const UNCLASSIFIED_CATEGORY = "Unclassified";
 const UNKNOWN_LOCATION_DETAILS = {
   municipality_name: "Unknown",
   district: "Unknown",
@@ -177,7 +181,7 @@ function getCategory(anomaly) {
     return "Traffic Infrastructure";
   }
 
-  return "Other";
+  return UNCLASSIFIED_CATEGORY;
 }
 
 function getSeverity(anomaly) {
@@ -208,7 +212,7 @@ function getSeverity(anomaly) {
 }
 
 function normalizeAnomalyRecord(record) {
-  const anomaly = record.anomaly || "Other";
+  const anomaly = record.anomaly || UNKNOWN_ANOMALY_LABEL;
   const municipalityId = record.municipality_id || "unknown";
   const municipalityDetails = getMunicipalityDetails(municipalityId);
 
@@ -240,8 +244,9 @@ function App() {
   const [selectedSeverity, setSelectedSeverity] = useState("All");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [searchText, setSearchText] = useState("");
-  const [visibleRowsCount, setVisibleRowsCount] = useState(10);
   const [loadingAnomalies, setLoadingAnomalies] = useState(false);
+  const [lastVisibleDoc, setLastVisibleDoc] = useState(null);
+  const [hasMoreAnomalies, setHasMoreAnomalies] = useState(true);
   const [exportLoading, setExportLoading] = useState(null);
   const [repairEvidenceTarget, setRepairEvidenceTarget] = useState(null);
   const [viewEvidenceTarget, setViewEvidenceTarget] = useState(null);
@@ -296,20 +301,8 @@ function App() {
   useEffect(() => {
     if (!user) return;
 
-    fetchAnomalies();
+    fetchAnomalies({ reset: true });
   }, [user]);
-
-  useEffect(() => {
-    setVisibleRowsCount(10);
-  }, [
-    selectedCategory,
-    selectedSeverity,
-    selectedStatus,
-    searchText,
-    anomalies.length,
-    userProfile?.role,
-    userProfile?.municipality_id,
-  ]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -325,72 +318,60 @@ function App() {
   const handleLogout = async () => {
     await signOut(auth);
     setAnomalies([]);
+    setLastVisibleDoc(null);
+    setHasMoreAnomalies(true);
     setUserProfile(null);
     setLoadingProfile(false);
     setLoadingAnomalies(false);
   };
 
-  const fetchAnomalies = async () => {
+  const fetchAnomalies = async ({ reset = false } = {}) => {
     if (!user) {
+      return;
+    }
+
+    if (!reset && (!hasMoreAnomalies || lastVisibleDoc === null)) {
       return;
     }
 
     setLoadingAnomalies(true);
 
     try {
-      const collectionName = "anomalies";
-      const anomaliesQuery = query(
-        collection(db, collectionName),
+      const queryConstraints = [
         orderBy("timestamp", "desc"),
-        limit(100)
-      );
-      let snapshot = await getDocs(anomaliesQuery);
+        limit(ANOMALIES_PAGE_SIZE),
+      ];
 
-      console.log("[RoadSense Debug] Firestore project ID:", db.app.options.projectId);
-      console.log("[RoadSense Debug] Collection queried:", collectionName);
-      console.log("[RoadSense Debug] Documents returned:", snapshot.size);
-      console.log(
-        "[RoadSense Debug] First document ID:",
-        snapshot.docs[0]?.id || "None"
-      );
-      console.log(
-        "[RoadSense Debug] First document data:",
-        snapshot.docs[0]?.data?.() || null
-      );
-
-      console.log(
-        `[RoadSense] Fetched ${snapshot.size} anomalies with timestamp query`
-      );
-
-      if (snapshot.empty) {
-        const legacyFallbackQuery = query(collection(db, collectionName), limit(100));
-        snapshot = await getDocs(legacyFallbackQuery);
-        console.log(
-          `[RoadSense] Fetched ${snapshot.size} legacy anomalies with fallback query`
-        );
-        console.log(
-          "[RoadSense Debug] Fallback first document ID:",
-          snapshot.docs[0]?.id || "None"
-        );
-        console.log(
-          "[RoadSense Debug] Fallback first document data:",
-          snapshot.docs[0]?.data?.() || null
-        );
+      if (!reset && lastVisibleDoc) {
+        queryConstraints.splice(1, 0, startAfter(lastVisibleDoc));
       }
+
+      const snapshot = await getDocs(
+        query(collection(db, "anomalies"), ...queryConstraints)
+      );
 
       const data = snapshot.docs.map((doc) =>
         normalizeAnomalyRecord({
           id: doc.id,
           ...doc.data(),
         })
-      ).sort((first, second) => {
-        const firstTimestamp = getAnomalyDate(first)?.getTime() || 0;
-        const secondTimestamp = getAnomalyDate(second)?.getTime() || 0;
+      );
 
-        return secondTimestamp - firstTimestamp;
+      setLastVisibleDoc(snapshot.docs.at(-1) || null);
+      setHasMoreAnomalies(snapshot.docs.length === ANOMALIES_PAGE_SIZE);
+      setAnomalies((current) => {
+        const mergedRecords = reset ? data : [...current, ...data];
+        const uniqueRecords = Array.from(
+          new Map(mergedRecords.map((item) => [item.id, item])).values()
+        );
+
+        return uniqueRecords.sort((first, second) => {
+          const firstTimestamp = getAnomalyDate(first)?.getTime() || 0;
+          const secondTimestamp = getAnomalyDate(second)?.getTime() || 0;
+
+          return secondTimestamp - firstTimestamp;
+        });
       });
-
-      setAnomalies(data);
     } finally {
       setLoadingAnomalies(false);
     }
@@ -539,12 +520,6 @@ function App() {
         )
       : anomalies;
 
-  console.log("[RoadSense Debug] Anomalies before filtering:", anomalies.length);
-  console.log(
-    "[RoadSense Debug] Anomalies after admin/municipality filtering:",
-    visibleAnomalies.length
-  );
-
   const normalizedSearchText = searchText.trim().toLowerCase();
   const filteredAnomalies = visibleAnomalies.filter((item) => {
     const matchesCategory =
@@ -572,12 +547,6 @@ function App() {
       matchesCategory && matchesSeverity && matchesStatus && matchesSearch
     );
   });
-
-  console.log(
-    "[RoadSense Debug] Anomalies after dashboard filters:",
-    filteredAnomalies.length
-  );
-
   const portalLabel =
     userProfile?.role === "municipality"
       ? `Municipality Portal: ${userProfile.municipality_id || "Unassigned"}`
@@ -611,7 +580,6 @@ function App() {
     "Road Damage",
     "Road Safety Objects",
     "Traffic Infrastructure",
-    "Other",
   ].map((category) => ({
     name: category,
     value: filteredAnomalies.filter((item) => item.category === category).length,
@@ -621,7 +589,7 @@ function App() {
     value: filteredAnomalies.filter((item) => item.status === status).length,
   }));
   const exportRows = filteredAnomalies.map((item) => ({
-    anomaly: item.anomaly || "Other",
+    anomaly: item.anomaly || UNKNOWN_ANOMALY_LABEL,
     category: item.category,
     severity: item.severity,
     status: item.status,
@@ -646,9 +614,6 @@ function App() {
     (item) => item.repair_note || item.repair_photo_url || item.repaired_by
   ).length;
   const latest = filteredAnomalies[0];
-  const visibleCount = Math.min(visibleRowsCount, filteredAnomalies.length);
-  const visibleTableAnomalies = filteredAnomalies.slice(0, visibleCount);
-  const canShowMore = filteredAnomalies.length > visibleCount;
 
   const handleExportCsv = async () => {
     setExportLoading("csv");
@@ -820,7 +785,7 @@ function App() {
           <div>
             <h3>Latest Detection</h3>
             <p>
-              {latest.anomaly || "Other"} detected at{" "}
+              {latest.anomaly || UNKNOWN_ANOMALY_LABEL} detected at{" "}
               {latest.address || "Unknown location"}
             </p>
             <p>Reported {latest.reports_count || 1} times</p>
@@ -855,7 +820,7 @@ function App() {
           <br />
           <strong>{repairProgress}%</strong>
         </div>
-        <div className="card other">
+        <div className="card most-reported">
           Most Reported
           <br />
           <strong>{mostReportedAnomaly?.anomaly || "N/A"}</strong>
@@ -936,7 +901,7 @@ function App() {
           </div>
           <button
             className="refresh-btn"
-            onClick={fetchAnomalies}
+            onClick={() => fetchAnomalies({ reset: true })}
             disabled={loadingAnomalies}
           >
             {loadingAnomalies ? "Refreshing..." : "Refresh Data"}
@@ -954,7 +919,6 @@ function App() {
               <option value="Road Damage">Road Damage</option>
               <option value="Road Safety Objects">Road Safety Objects</option>
               <option value="Traffic Infrastructure">Traffic Infrastructure</option>
-              <option value="Other">Other</option>
             </select>
           </label>
 
@@ -1058,10 +1022,12 @@ function App() {
             </thead>
 
             <tbody>
-              {visibleTableAnomalies.map((item) => (
+              {filteredAnomalies.map((item) => (
                 <tr key={item.id}>
                   <td>
-                    <span className="badge">{item.anomaly || "Other"}</span>
+                    <span className="badge">
+                      {item.anomaly || UNKNOWN_ANOMALY_LABEL}
+                    </span>
                   </td>
                   <td>{item.category}</td>
                   <td>{item.severity}</td>
@@ -1151,14 +1117,15 @@ function App() {
             </tbody>
           </table>
         </div>
-        {canShowMore && (
+        {hasMoreAnomalies && (
           <div className="show-more-wrap">
             <button
               type="button"
               className="show-more-btn"
-              onClick={() => setVisibleRowsCount((current) => current + 10)}
+              onClick={() => fetchAnomalies({ reset: false })}
+              disabled={loadingAnomalies}
             >
-              Show More
+              {loadingAnomalies ? "Loading..." : "Show More"}
             </button>
           </div>
         )}
