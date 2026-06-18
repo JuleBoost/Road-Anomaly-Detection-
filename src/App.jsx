@@ -830,17 +830,6 @@ function App() {
       )}
 
       <div className="cards">
-        <div className="card other">
-          Debug
-          <br />
-          <strong>{anomalies.length}</strong>
-          <div className="debug-card-meta">
-            <span>Fetched Docs: {anomalies.length}</span>
-            <span>Visible Docs: {visibleAnomalies.length}</span>
-            <span>User Role: {userProfile?.role || "Unknown"}</span>
-            <span>Municipality ID: {userProfile?.municipality_id || "Unknown"}</span>
-          </div>
-        </div>
         <div className="card total">
           Open Issues
           <br />
