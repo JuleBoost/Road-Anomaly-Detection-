@@ -118,35 +118,46 @@
     return earthRadiusMeters * c;
   }
 
+  function isSameRoadIssue(existingAnomaly, normalizedAnomaly, lat, lng) {
+    const existingStatus = existingAnomaly.status || "New";
+    const existingAnomalyType = normalizeAnomalyType(existingAnomaly.anomaly || "");
+
+    if (existingAnomalyType !== normalizedAnomaly) {
+      return false;
+    }
+
+    if (existingStatus === "Repaired" || existingStatus === "Rejected") {
+      return false;
+    }
+
+    const distanceMeters = calculateDistanceMeters(
+      lat,
+      lng,
+      existingAnomaly.lat,
+      existingAnomaly.lng
+    );
+
+    return distanceMeters <= 10;
+  }
+
+  function findDuplicateAnomalyDoc(snapshot, normalizedAnomaly, lat, lng) {
+    return snapshot.docs.find((snapshotDoc) =>
+      isSameRoadIssue(snapshotDoc.data(), normalizedAnomaly, lat, lng)
+    );
+  }
+
   window.addDetectionToFirestore = async (anomalyType, confidence, lat, lng, address) => {
     try {
       const municipalityId = getMunicipality(lat, lng);
       const normalizedAnomaly = normalizeAnomalyType(anomalyType);
       const anomaliesRef = collection(db, "anomalies");
       const existingAnomaliesSnapshot = await getDocs(anomaliesRef);
-
-      const duplicateDoc = existingAnomaliesSnapshot.docs.find((snapshotDoc) => {
-        const existingAnomaly = snapshotDoc.data();
-        const existingStatus = existingAnomaly.status || "New";
-        const existingAnomalyType = normalizeAnomalyType(existingAnomaly.anomaly || "");
-
-        if (existingAnomalyType !== normalizedAnomaly) {
-          return false;
-        }
-
-        if (existingStatus === "Repaired" || existingStatus === "Rejected") {
-          return false;
-        }
-
-        const distanceMeters = calculateDistanceMeters(
-          lat,
-          lng,
-          existingAnomaly.lat,
-          existingAnomaly.lng
-        );
-
-        return distanceMeters <= 10;
-      });
+      const duplicateDoc = findDuplicateAnomalyDoc(
+        existingAnomaliesSnapshot,
+        normalizedAnomaly,
+        lat,
+        lng
+      );
 
       if (duplicateDoc) {
         const duplicateData = duplicateDoc.data();

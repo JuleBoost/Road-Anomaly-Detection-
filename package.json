@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cleanup:duplicates": "node scripts/cleanupDuplicateAnomalies.mjs",
+    "backfill:timestamps": "node scripts/backfillAnomalyTimestamps.mjs"
   },
   "dependencies": {
     "@turf/turf": "^7.3.5",

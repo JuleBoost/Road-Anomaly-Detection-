@@ -50,26 +50,83 @@ const STATUS_OPTIONS = [
   "Assigned",
   "Repaired",
   "Verified",
-  "Duplicate",
-  "Rejected",
-];
-const ACTION_STATUS_OPTIONS = [
-  "New",
-  "Under Review",
-  "Assigned",
-  "Repaired",
-  "Verified",
   "Rejected",
 ];
 const CATEGORY_CHART_COLORS = ["#ef4444", "#f97316", "#eab308", "#60a5fa"];
 const ANOMALIES_PAGE_SIZE = 10;
 const UNKNOWN_ANOMALY_LABEL = "Unknown Anomaly";
 const UNCLASSIFIED_CATEGORY = "Unclassified";
+const OPEN_ISSUE_STATUSES = ["New", "Under Review", "Assigned"];
+const REPAIRED_ISSUE_STATUSES = ["Repaired", "Verified"];
+const STATUS_WORKFLOW_OPTIONS = {
+  New: ["New", "Under Review"],
+  "Under Review": ["Under Review", "Assigned", "Rejected"],
+  Assigned: ["Assigned", "Repaired"],
+  Repaired: ["Repaired", "Verified"],
+  Verified: ["Verified"],
+  Rejected: ["Rejected"],
+};
+const STATUS_PRIORITY = {
+  New: 0,
+  "Under Review": 1,
+  Assigned: 2,
+  Repaired: 3,
+  Verified: 4,
+  Rejected: 5,
+};
 const UNKNOWN_LOCATION_DETAILS = {
   municipality_name: "Unknown",
   district: "Unknown",
   governorate: "Unknown",
 };
+
+function normalizeUserRole(role) {
+  if (role === "municipality") {
+    return "municipality_manager";
+  }
+
+  return role || "municipality_viewer";
+}
+
+function canViewAll(userProfile) {
+  return normalizeUserRole(userProfile?.role) === "admin";
+}
+
+function canUpdateStatus(userProfile) {
+  return ["admin", "municipality_manager"].includes(
+    normalizeUserRole(userProfile?.role)
+  );
+}
+
+function canUploadEvidence(userProfile) {
+  return ["admin", "municipality_manager"].includes(
+    normalizeUserRole(userProfile?.role)
+  );
+}
+
+function canExportReports(userProfile) {
+  return ["admin", "municipality_manager"].includes(
+    normalizeUserRole(userProfile?.role)
+  );
+}
+
+function isViewerRole(userProfile) {
+  return normalizeUserRole(userProfile?.role) === "municipality_viewer";
+}
+
+function getRoleBadgeLabel(userProfile) {
+  const normalizedRole = normalizeUserRole(userProfile?.role);
+
+  if (normalizedRole === "admin") {
+    return "Super Admin";
+  }
+
+  if (normalizedRole === "municipality_manager") {
+    return "Municipality Manager";
+  }
+
+  return "Municipality Viewer";
+}
 
 function getMunicipalityDetails(municipalityId) {
   if (!municipalityId || municipalityId === "unknown") {
@@ -116,39 +173,6 @@ function getAnomalyDate(anomaly) {
     resolveDateValue(anomaly?.first_seen_at) ||
     resolveDateValue(anomaly?.last_seen_at)
   );
-}
-
-function calculateDistanceMeters(lat1, lng1, lat2, lng2) {
-  const firstLat = Number(lat1);
-  const firstLng = Number(lng1);
-  const secondLat = Number(lat2);
-  const secondLng = Number(lng2);
-
-  if (
-    [firstLat, firstLng, secondLat, secondLng].some((value) =>
-      Number.isNaN(value)
-    )
-  ) {
-    return Number.POSITIVE_INFINITY;
-  }
-
-  const toRadians = (value) => (value * Math.PI) / 180;
-  const earthRadiusMeters = 6371000;
-  const deltaLat = toRadians(secondLat - firstLat);
-  const deltaLng = toRadians(secondLng - firstLng);
-  const firstLatRadians = toRadians(firstLat);
-  const secondLatRadians = toRadians(secondLat);
-
-  const haversine =
-    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
-    Math.cos(firstLatRadians) *
-      Math.cos(secondLatRadians) *
-      Math.sin(deltaLng / 2) *
-      Math.sin(deltaLng / 2);
-
-  const arc = 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
-
-  return earthRadiusMeters * arc;
 }
 
 function formatCreatedDate(timestamp) {
@@ -248,32 +272,84 @@ function normalizeAnomalyType(anomaly) {
   return anomaly?.toString().trim().toLowerCase().replace(/\s+/g, "-") || "";
 }
 
+function formatAnomalyLabel(anomaly) {
+  const normalizedAnomaly = normalizeAnomalyType(anomaly);
+
+  if (!normalizedAnomaly) {
+    return UNKNOWN_ANOMALY_LABEL;
+  }
+
+  return normalizedAnomaly
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function calculateDistanceMeters(lat1, lng1, lat2, lng2) {
+  const firstLat = Number(lat1);
+  const firstLng = Number(lng1);
+  const secondLat = Number(lat2);
+  const secondLng = Number(lng2);
+
+  if (
+    [firstLat, firstLng, secondLat, secondLng].some((value) =>
+      Number.isNaN(value)
+    )
+  ) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const earthRadiusMeters = 6371000;
+  const deltaLat = toRadians(secondLat - firstLat);
+  const deltaLng = toRadians(secondLng - firstLng);
+  const firstLatRadians = toRadians(firstLat);
+  const secondLatRadians = toRadians(secondLat);
+
+  const haversine =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(firstLatRadians) *
+      Math.cos(secondLatRadians) *
+      Math.sin(deltaLng / 2) *
+      Math.sin(deltaLng / 2);
+
+  const arc = 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+
+  return earthRadiusMeters * arc;
+}
+
 function normalizeAddressValue(address) {
   return address?.toString().trim().toLowerCase() || "";
 }
 
-function getLocationFingerprint(item) {
-  const lat = Number(item.lat);
-  const lng = Number(item.lng);
-
-  if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
-    return `${lat.toFixed(5)}:${lng.toFixed(5)}`;
+function isSameVisibleIssue(firstItem, secondItem) {
+  if (
+    normalizeAnomalyType(firstItem.anomaly) !==
+    normalizeAnomalyType(secondItem.anomaly)
+  ) {
+    return false;
   }
 
-  const normalizedAddress = normalizeAddressValue(item.address);
+  const firstAddress = normalizeAddressValue(firstItem.address);
+  const secondAddress = normalizeAddressValue(secondItem.address);
 
-  if (normalizedAddress && normalizedAddress !== "unknown location") {
-    return normalizedAddress;
+  if (
+    firstAddress &&
+    secondAddress &&
+    firstAddress !== "unknown location" &&
+    firstAddress === secondAddress
+  ) {
+    return true;
   }
 
-  return [
-    item.municipality_id || "",
-    item.municipality_name || "",
-    item.district || "",
-    item.governorate || "",
-  ]
-    .join(":")
-    .toLowerCase();
+  return (
+    calculateDistanceMeters(
+      firstItem.lat,
+      firstItem.lng,
+      secondItem.lat,
+      secondItem.lng
+    ) <= 10
+  );
 }
 
 function normalizeCategoryValue(category, anomaly) {
@@ -284,8 +360,42 @@ function normalizeCategoryValue(category, anomaly) {
   return category;
 }
 
+function normalizeStatusValue(status) {
+  return STATUS_OPTIONS.includes(status) ? status : "New";
+}
+
+function getAllowedStatusOptions(status) {
+  const normalizedStatus = normalizeStatusValue(status);
+
+  return STATUS_WORKFLOW_OPTIONS[normalizedStatus] || STATUS_WORKFLOW_OPTIONS.New;
+}
+
+function getStatusClassName(status) {
+  return `status-pill status-${normalizeStatusValue(status)
+    .toLowerCase()
+    .replace(/\s+/g, "-")}`;
+}
+
+function hasRepairEvidence(item) {
+  return Boolean(
+    item?.repair_note ||
+      item?.repair_date ||
+      item?.repaired_by ||
+      item?.repair_photo_url
+  );
+}
+
+function getHigherPriorityStatus(firstStatus, secondStatus) {
+  const normalizedFirst = normalizeStatusValue(firstStatus);
+  const normalizedSecond = normalizeStatusValue(secondStatus);
+
+  return STATUS_PRIORITY[normalizedSecond] > STATUS_PRIORITY[normalizedFirst]
+    ? normalizedSecond
+    : normalizedFirst;
+}
+
 function normalizeAnomalyRecord(record) {
-  const anomaly = record.anomaly || UNKNOWN_ANOMALY_LABEL;
+  const anomaly = formatAnomalyLabel(record.anomaly || UNKNOWN_ANOMALY_LABEL);
   const municipalityId = record.municipality_id || "unknown";
   const municipalityDetails = getMunicipalityDetails(municipalityId);
 
@@ -295,7 +405,7 @@ function normalizeAnomalyRecord(record) {
     municipality_id: municipalityId,
     category: normalizeCategoryValue(record.category, anomaly),
     severity: record.severity || getSeverity(anomaly),
-    status: record.status || "New",
+    status: normalizeStatusValue(record.status),
     reports_count: record.reports_count || 1,
     municipality_name:
       record.municipality_name || municipalityDetails.municipality_name,
@@ -308,39 +418,62 @@ function normalizeAnomalyRecord(record) {
   };
 }
 
-function dedupeAnomaliesForDisplay(items) {
-  return items.reduce((dedupedItems, item) => {
-    const itemType = normalizeAnomalyType(item.anomaly);
-    const itemLocationFingerprint = getLocationFingerprint(item);
-    const existingIndex = dedupedItems.findIndex((currentItem) => {
-      if (normalizeAnomalyType(currentItem.anomaly) !== itemType) {
-        return false;
-      }
-
-      return getLocationFingerprint(currentItem) === itemLocationFingerprint;
-    });
+function aggregateVisibleIssues(items) {
+  return items.reduce((aggregatedItems, item) => {
+    const existingIndex = aggregatedItems.findIndex((currentItem) =>
+      isSameVisibleIssue(currentItem, item)
+    );
 
     if (existingIndex === -1) {
-      dedupedItems.push(item);
-      return dedupedItems;
+      aggregatedItems.push({ ...item });
+      return aggregatedItems;
     }
 
-    const existingItem = dedupedItems[existingIndex];
+    const existingItem = aggregatedItems[existingIndex];
+    const currentDate = getAnomalyDate(item)?.getTime() || 0;
+    const existingDate = getAnomalyDate(existingItem)?.getTime() || 0;
+    const latestItem = currentDate >= existingDate ? item : existingItem;
+    const mergedStatus = getHigherPriorityStatus(
+      existingItem.status,
+      item.status
+    );
 
-    dedupedItems[existingIndex] = {
+    aggregatedItems[existingIndex] = {
       ...existingItem,
-      reports_count:
-        (existingItem.reports_count || 1) + (item.reports_count || 1),
+      ...latestItem,
+      status: mergedStatus,
+      reports_count: (existingItem.reports_count || 1) + (item.reports_count || 1),
       confidence: Math.max(existingItem.confidence || 0, item.confidence || 0),
-      repair_note: existingItem.repair_note || item.repair_note || "",
+      first_seen_at:
+        resolveDateValue(existingItem.first_seen_at) &&
+        resolveDateValue(item.first_seen_at)
+          ? resolveDateValue(existingItem.first_seen_at) <=
+            resolveDateValue(item.first_seen_at)
+            ? existingItem.first_seen_at
+            : item.first_seen_at
+          : existingItem.first_seen_at || item.first_seen_at || null,
+      last_seen_at:
+        resolveDateValue(existingItem.last_seen_at) &&
+        resolveDateValue(item.last_seen_at)
+          ? resolveDateValue(existingItem.last_seen_at) >=
+            resolveDateValue(item.last_seen_at)
+            ? existingItem.last_seen_at
+            : item.last_seen_at
+          : existingItem.last_seen_at || item.last_seen_at || null,
+      repair_note: latestItem.repair_note || existingItem.repair_note || "",
       repair_photo_url:
-        existingItem.repair_photo_url || item.repair_photo_url || "",
-      repair_date: existingItem.repair_date || item.repair_date || null,
-      repaired_by: existingItem.repaired_by || item.repaired_by || "",
+        latestItem.repair_photo_url || existingItem.repair_photo_url || "",
+      repair_date: latestItem.repair_date || existingItem.repair_date || null,
+      repaired_by: latestItem.repaired_by || existingItem.repaired_by || "",
     };
 
-    return dedupedItems;
-  }, []);
+    return aggregatedItems;
+  }, []).sort((first, second) => {
+    const secondDate = getAnomalyDate(second)?.getTime() || 0;
+    const firstDate = getAnomalyDate(first)?.getTime() || 0;
+
+    return secondDate - firstDate;
+  });
 }
 
 function App() {
@@ -392,12 +525,22 @@ function App() {
         const userProfileSnapshot = await getDoc(userProfileRef);
 
         if (userProfileSnapshot.exists()) {
-          setUserProfile(userProfileSnapshot.data());
+          const profileData = userProfileSnapshot.data();
+          setUserProfile({
+            ...profileData,
+            role: normalizeUserRole(profileData.role),
+          });
         } else {
-          setUserProfile({ role: "municipality", municipality_id: "" });
+          setUserProfile({
+            role: "municipality_manager",
+            municipality_id: "",
+          });
         }
       } catch (error) {
-        setUserProfile({ role: "municipality", municipality_id: "" });
+        setUserProfile({
+          role: "municipality_manager",
+          municipality_id: "",
+        });
       } finally {
         setLoadingProfile(false);
       }
@@ -486,14 +629,29 @@ function App() {
   };
 
   const updateAnomalyStatus = async (anomalyId, newStatus) => {
+    if (!canUpdateStatus(userProfile)) {
+      alert("You do not have permission to update status");
+      return;
+    }
+
+    const currentAnomaly = anomalies.find((item) => item.id === anomalyId);
+    const currentStatus = normalizeStatusValue(currentAnomaly?.status);
+    const normalizedNewStatus = normalizeStatusValue(newStatus);
+    const allowedStatuses = getAllowedStatusOptions(currentStatus);
+
+    if (!allowedStatuses.includes(normalizedNewStatus)) {
+      alert("Invalid status transition");
+      return;
+    }
+
     try {
       console.log("[RoadSense] Status update starting:", {
         anomalyId,
-        newStatus,
+        newStatus: normalizedNewStatus,
       });
       const anomalyRef = doc(db, "anomalies", anomalyId);
       await updateDoc(anomalyRef, {
-        status: newStatus,
+        status: normalizedNewStatus,
         updated_at: new Date(),
       });
       setAnomalies((current) =>
@@ -501,7 +659,7 @@ function App() {
           item.id === anomalyId
             ? {
                 ...item,
-                status: newStatus,
+                status: normalizedNewStatus,
                 updated_at: new Date(),
               }
             : item
@@ -509,12 +667,12 @@ function App() {
       );
       console.log("[RoadSense] Status update succeeded:", {
         anomalyId,
-        newStatus,
+        newStatus: normalizedNewStatus,
       });
     } catch (error) {
       console.error("[RoadSense] Status update failed:", {
         anomalyId,
-        newStatus,
+        newStatus: normalizedNewStatus,
         error,
       });
       alert("Failed to update status");
@@ -522,6 +680,10 @@ function App() {
   };
 
   const openRepairEvidenceModal = (item) => {
+    if (!canUploadEvidence(userProfile)) {
+      return;
+    }
+
     setRepairEvidenceTarget(item);
     setRepairNote(item.repair_note || "");
     setRepairDate(toDateInputValue(item.repair_date));
@@ -543,10 +705,17 @@ function App() {
       return;
     }
 
+    if (!canUploadEvidence(userProfile)) {
+      alert("You do not have permission to upload repair evidence");
+      return;
+    }
+
     setRepairEvidenceLoading(true);
 
     try {
       let repairPhotoUrl = repairEvidenceTarget.repair_photo_url || "";
+      const nextRepairDate = repairDate ? new Date(repairDate) : new Date();
+      const nextRepairedBy = repairedBy || user?.email || "Unknown";
 
       if (repairPhotoFile) {
         const storageRef = ref(
@@ -560,13 +729,29 @@ function App() {
       await updateDoc(doc(db, "anomalies", repairEvidenceTarget.id), {
         repair_note: repairNote,
         repair_photo_url: repairPhotoUrl,
-        repair_date: repairDate ? new Date(repairDate) : new Date(),
-        repaired_by: repairedBy || user?.email || "Unknown",
+        repair_date: nextRepairDate,
+        repaired_by: nextRepairedBy,
         updated_at: new Date(),
       });
 
+      setAnomalies((current) =>
+        current.map((item) =>
+          item.id === repairEvidenceTarget.id
+            ? {
+                ...item,
+                repair_note: repairNote,
+                repair_photo_url: repairPhotoUrl,
+                repair_date: nextRepairDate,
+                repaired_by: nextRepairedBy,
+                updated_at: new Date(),
+              }
+            : item
+        )
+      );
+
       closeRepairEvidenceModal();
     } catch (error) {
+      console.error("[RoadSense] Repair evidence save failed:", error);
       alert("Failed to save repair evidence");
       setRepairEvidenceLoading(false);
     }
@@ -622,13 +807,13 @@ function App() {
   }
 
   const visibleAnomalies =
-    userProfile?.role === "municipality"
-      ? anomalies.filter(
-          (item) => item.municipality_id === userProfile.municipality_id
-        )
-      : anomalies;
-  const dedupedVisibleAnomalies = dedupeAnomaliesForDisplay(visibleAnomalies);
-  const displayAnomalies = dedupedVisibleAnomalies.filter(
+    canViewAll(userProfile)
+      ? anomalies
+      : anomalies.filter(
+          (item) => item.municipality_id === userProfile?.municipality_id
+        );
+  const aggregatedVisibleAnomalies = aggregateVisibleIssues(visibleAnomalies);
+  const displayAnomalies = aggregatedVisibleAnomalies.filter(
     (item) => item.category !== UNCLASSIFIED_CATEGORY
   );
 
@@ -660,15 +845,16 @@ function App() {
     );
   });
   const portalLabel =
-    userProfile?.role === "municipality"
-      ? `Municipality Portal: ${userProfile.municipality_id || "Unassigned"}`
-      : "Super Admin View";
+    canViewAll(userProfile)
+      ? "Super Admin View"
+      : `Municipality Portal: ${userProfile?.municipality_id || "Unassigned"}`;
+  const roleBadgeLabel = getRoleBadgeLabel(userProfile);
 
-  const openIssuesCount = filteredAnomalies.filter(
-    (a) => a.status !== "Repaired" && a.status !== "Rejected"
+  const openIssuesCount = filteredAnomalies.filter((a) =>
+    OPEN_ISSUE_STATUSES.includes(normalizeStatusValue(a.status))
   ).length;
-  const repairedIssuesCount = filteredAnomalies.filter(
-    (a) => a.status === "Repaired"
+  const repairedIssuesCount = filteredAnomalies.filter((a) =>
+    REPAIRED_ISSUE_STATUSES.includes(normalizeStatusValue(a.status))
   ).length;
   const highSeverityCount = filteredAnomalies.filter(
     (a) => a.severity === "High"
@@ -677,10 +863,17 @@ function App() {
     (sum, item) => sum + (item.reports_count || 1),
     0
   );
+  const repairedReportsCount = filteredAnomalies.reduce(
+    (sum, item) =>
+      REPAIRED_ISSUE_STATUSES.includes(normalizeStatusValue(item.status))
+        ? sum + (item.reports_count || 1)
+        : sum,
+    0
+  );
   const repairProgress =
-    filteredAnomalies.length === 0
+    totalReportsCount === 0
       ? 0
-      : Math.round((repairedIssuesCount / filteredAnomalies.length) * 100);
+      : Math.round((repairedReportsCount / totalReportsCount) * 100);
   const mostReportedAnomaly = filteredAnomalies.reduce(
     (highest, item) =>
       (item.reports_count || 1) > (highest?.reports_count || 0)
@@ -700,7 +893,9 @@ function App() {
     .filter((item) => item.value > 0);
   const statusChartData = STATUS_OPTIONS.map((status) => ({
     name: status,
-    value: filteredAnomalies.filter((item) => item.status === status).length,
+    value: filteredAnomalies.filter(
+      (item) => normalizeStatusValue(item.status) === status
+    ).length,
   }));
   const exportRows = filteredAnomalies.map((item) => ({
     anomaly: item.anomaly || UNKNOWN_ANOMALY_LABEL,
@@ -790,9 +985,9 @@ function App() {
       const pdf = new jsPDF({ orientation: "landscape" });
       const reportDate = new Date().toLocaleString();
       const municipalityLabel =
-        userProfile?.role === "municipality"
-          ? userProfile.municipality_id || "Unknown Municipality"
-          : "All Visible Municipalities";
+        canViewAll(userProfile)
+          ? "All Visible Municipalities"
+          : userProfile?.municipality_id || "Unknown Municipality";
 
       pdf.setFontSize(18);
       pdf.text("RoadSense Municipality Report", 14, 18);
@@ -871,6 +1066,7 @@ function App() {
           <a href="#dashboard">Dashboard</a>
           <a href="#map">Map</a>
           <a href="#table">Anomalies</a>
+          <span className="nav-role-badge">{roleBadgeLabel}</span>
           <button className="logout-btn" onClick={handleLogout}>
             Logout
           </button>
@@ -1091,14 +1287,22 @@ function App() {
           <button
             className="export-btn"
             onClick={handleExportCsv}
-            disabled={exportLoading !== null || filteredAnomalies.length === 0}
+            disabled={
+              !canExportReports(userProfile) ||
+              exportLoading !== null ||
+              filteredAnomalies.length === 0
+            }
           >
             {exportLoading === "csv" ? "Generating CSV..." : "Export CSV"}
           </button>
           <button
             className="export-btn secondary"
             onClick={handleExportPdf}
-            disabled={exportLoading !== null || filteredAnomalies.length === 0}
+            disabled={
+              !canExportReports(userProfile) ||
+              exportLoading !== null ||
+              filteredAnomalies.length === 0
+            }
           >
             {exportLoading === "pdf" ? "Generating PDF..." : "Export PDF"}
           </button>
@@ -1150,7 +1354,11 @@ function App() {
                   </td>
                   <td>{item.category}</td>
                   <td>{item.severity}</td>
-                  <td>{item.status}</td>
+                  <td>
+                    <span className={getStatusClassName(item.status)}>
+                      {normalizeStatusValue(item.status)}
+                    </span>
+                  </td>
                   <td>{item.municipality_name || "Unknown"}</td>
                   <td>{item.district || "Unknown"}</td>
                   <td>{item.governorate || "Unknown"}</td>
@@ -1181,55 +1389,60 @@ function App() {
                   <td>{item.lng}</td>
                   <td>
                     <div className="evidence-actions">
-                      {(item.repair_photo_url || item.repair_note || item.repaired_by) && (
+                      {hasRepairEvidence(item) ? (
                         <button
                           className="evidence-btn"
                           onClick={() => setViewEvidenceTarget(item)}
                         >
                           View Evidence
                         </button>
-                      )}
-                      {userProfile?.role === "municipality" &&
-                        item.status === "Repaired" &&
-                        !(item.repair_photo_url || item.repair_note || item.repaired_by) && (
+                      ) : canUploadEvidence(userProfile) &&
+                        normalizeStatusValue(item.status) === "Repaired" ? (
                           <button
                             className="evidence-btn secondary"
                             onClick={() => openRepairEvidenceModal(item)}
                           >
                             Add Repair Evidence
                           </button>
-                        )}
-                      {!(
-                        (item.repair_photo_url || item.repair_note || item.repaired_by) ||
-                        (userProfile?.role === "municipality" &&
-                          item.status === "Repaired")
-                      ) && <span className="evidence-empty">No evidence</span>}
+                        ) : (
+                        <span className="evidence-empty">No evidence</span>
+                      )}
                     </div>
                   </td>
                   <td>
-                    <select
-                      className="table-status-select"
-                      value={item.status || "New"}
-                      onChange={async (e) => {
-                        await updateAnomalyStatus(item.id, e.target.value);
+                    {canUpdateStatus(userProfile) ? (
+                      <select
+                        className="table-status-select"
+                        value={normalizeStatusValue(item.status)}
+                        onChange={async (e) => {
+                          await updateAnomalyStatus(item.id, e.target.value);
 
-                        if (
-                          e.target.value === "Repaired" &&
-                          userProfile?.role === "municipality"
-                        ) {
-                          openRepairEvidenceModal({
-                            ...item,
-                            status: "Repaired",
-                          });
-                        }
-                      }}
-                    >
-                      {ACTION_STATUS_OPTIONS.map((status) => (
-                        <option key={status} value={status}>
-                          {status}
-                        </option>
-                      ))}
-                    </select>
+                          if (
+                            e.target.value === "Repaired" &&
+                            canUploadEvidence(userProfile)
+                          ) {
+                            openRepairEvidenceModal({
+                              ...item,
+                              status: "Repaired",
+                            });
+                          }
+                        }}
+                      >
+                        {getAllowedStatusOptions(item.status).map((status) => (
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      isViewerRole(userProfile) ? (
+                        <span className={getStatusClassName(item.status)}>
+                          {normalizeStatusValue(item.status)}
+                        </span>
+                      ) : (
+                        <span className="action-disabled">Read Only</span>
+                      )
+                    )}
                   </td>
                 </tr>
               ))}

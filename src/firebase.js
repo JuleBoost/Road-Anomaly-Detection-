@@ -3,7 +3,7 @@ import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyC-sWBioNBiHdYU-qpRPNEL_d5kB4zNLVQ",
   authDomain: "roadsense-864cc.firebaseapp.com",
   projectId: "roadsense-864cc",

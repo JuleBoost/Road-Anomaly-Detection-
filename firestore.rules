@@ -16,21 +16,36 @@ service cloud.firestore {
       return isAuthenticated() && userProfile().data.role == "admin";
     }
 
-    // Restrict municipality access to users with the municipality role.
-    function isMunicipalityUser() {
-      return isAuthenticated() && userProfile().data.role == "municipality";
+    // Municipality managers include the legacy "municipality" role for backward compatibility.
+    function isMunicipalityManager() {
+      return isAuthenticated() && (
+        userProfile().data.role == "municipality_manager"
+        || userProfile().data.role == "municipality"
+      );
+    }
+
+    // Municipality viewers are read-only users scoped to one municipality.
+    function isMunicipalityViewer() {
+      return isAuthenticated() && userProfile().data.role == "municipality_viewer";
     }
 
     // Match anomalies to the municipality assigned in the caller's profile.
     function sameMunicipality(resourceData) {
-      return isMunicipalityUser()
+      return (isMunicipalityManager() || isMunicipalityViewer())
         && resourceData.municipality_id == userProfile().data.municipality_id;
     }
 
-    // Municipality users may only change status and updated_at.
-    function municipalityStatusOnlyUpdate() {
+    // Municipality managers may update workflow status and repair evidence fields.
+    function municipalityManagerAllowedUpdate() {
       return request.resource.data.diff(resource.data).changedKeys()
-        .hasOnly(["status", "updated_at"]);
+        .hasOnly([
+          "status",
+          "updated_at",
+          "repair_note",
+          "repair_photo_url",
+          "repair_date",
+          "repaired_by",
+        ]);
     }
 
     match /users/{uid} {
@@ -45,12 +60,14 @@ service cloud.firestore {
       // Any signed-in client may create anomalies for now.
       allow create: if isAuthenticated();
 
-      // Admins can read all anomalies; municipality users only their own area.
+      // Admins can read all anomalies; municipality roles can read only their own area.
       allow read: if isAdmin() || sameMunicipality(resource.data);
 
-      // Admins can update any anomaly; municipality users only status fields in their area.
+      // Admins can update any anomaly; municipality managers can update allowed fields in their area.
       allow update: if isAdmin()
-        || (sameMunicipality(resource.data) && municipalityStatusOnlyUpdate());
+        || (isMunicipalityManager()
+          && sameMunicipality(resource.data)
+          && municipalityManagerAllowedUpdate());
 
       // No client-side deletes are allowed.
       allow delete: if false;
