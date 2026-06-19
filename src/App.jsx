@@ -244,6 +244,38 @@ function getSeverity(anomaly) {
   return "Low";
 }
 
+function normalizeAnomalyType(anomaly) {
+  return anomaly?.toString().trim().toLowerCase().replace(/\s+/g, "-") || "";
+}
+
+function normalizeAddressValue(address) {
+  return address?.toString().trim().toLowerCase() || "";
+}
+
+function getLocationFingerprint(item) {
+  const lat = Number(item.lat);
+  const lng = Number(item.lng);
+
+  if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+    return `${lat.toFixed(5)}:${lng.toFixed(5)}`;
+  }
+
+  const normalizedAddress = normalizeAddressValue(item.address);
+
+  if (normalizedAddress && normalizedAddress !== "unknown location") {
+    return normalizedAddress;
+  }
+
+  return [
+    item.municipality_id || "",
+    item.municipality_name || "",
+    item.district || "",
+    item.governorate || "",
+  ]
+    .join(":")
+    .toLowerCase();
+}
+
 function normalizeCategoryValue(category, anomaly) {
   if (!category || category === "Other") {
     return getCategory(anomaly);
@@ -278,19 +310,14 @@ function normalizeAnomalyRecord(record) {
 
 function dedupeAnomaliesForDisplay(items) {
   return items.reduce((dedupedItems, item) => {
+    const itemType = normalizeAnomalyType(item.anomaly);
+    const itemLocationFingerprint = getLocationFingerprint(item);
     const existingIndex = dedupedItems.findIndex((currentItem) => {
-      if (currentItem.anomaly !== item.anomaly) {
+      if (normalizeAnomalyType(currentItem.anomaly) !== itemType) {
         return false;
       }
 
-      return (
-        calculateDistanceMeters(
-          currentItem.lat,
-          currentItem.lng,
-          item.lat,
-          item.lng
-        ) <= 10
-      );
+      return getLocationFingerprint(currentItem) === itemLocationFingerprint;
     });
 
     if (existingIndex === -1) {
