@@ -211,6 +211,14 @@ function getSeverity(anomaly) {
   return "Low";
 }
 
+function normalizeCategoryValue(category, anomaly) {
+  if (!category || category === "Other") {
+    return getCategory(anomaly);
+  }
+
+  return category;
+}
+
 function normalizeAnomalyRecord(record) {
   const anomaly = record.anomaly || UNKNOWN_ANOMALY_LABEL;
   const municipalityId = record.municipality_id || "unknown";
@@ -220,7 +228,7 @@ function normalizeAnomalyRecord(record) {
     ...record,
     anomaly,
     municipality_id: municipalityId,
-    category: record.category || getCategory(anomaly),
+    category: normalizeCategoryValue(record.category, anomaly),
     severity: record.severity || getSeverity(anomaly),
     status: record.status || "New",
     reports_count: record.reports_count || 1,
@@ -519,9 +527,12 @@ function App() {
           (item) => item.municipality_id === userProfile.municipality_id
         )
       : anomalies;
+  const displayAnomalies = visibleAnomalies.filter(
+    (item) => item.category !== UNCLASSIFIED_CATEGORY
+  );
 
   const normalizedSearchText = searchText.trim().toLowerCase();
-  const filteredAnomalies = visibleAnomalies.filter((item) => {
+  const filteredAnomalies = displayAnomalies.filter((item) => {
     const matchesCategory =
       selectedCategory === "All" || item.category === selectedCategory;
     const matchesSeverity =
@@ -896,7 +907,7 @@ function App() {
           <div>
             <h2>Dashboard Filters</h2>
             <p>
-              Showing {filteredAnomalies.length} of {visibleAnomalies.length} reports
+              Showing {filteredAnomalies.length} of {displayAnomalies.length} reports
             </p>
           </div>
           <button
