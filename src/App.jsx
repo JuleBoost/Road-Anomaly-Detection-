@@ -118,6 +118,39 @@ function getAnomalyDate(anomaly) {
   );
 }
 
+function calculateDistanceMeters(lat1, lng1, lat2, lng2) {
+  const firstLat = Number(lat1);
+  const firstLng = Number(lng1);
+  const secondLat = Number(lat2);
+  const secondLng = Number(lng2);
+
+  if (
+    [firstLat, firstLng, secondLat, secondLng].some((value) =>
+      Number.isNaN(value)
+    )
+  ) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const earthRadiusMeters = 6371000;
+  const deltaLat = toRadians(secondLat - firstLat);
+  const deltaLng = toRadians(secondLng - firstLng);
+  const firstLatRadians = toRadians(firstLat);
+  const secondLatRadians = toRadians(secondLat);
+
+  const haversine =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(firstLatRadians) *
+      Math.cos(secondLatRadians) *
+      Math.sin(deltaLng / 2) *
+      Math.sin(deltaLng / 2);
+
+  const arc = 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+
+  return earthRadiusMeters * arc;
+}
+
 function formatCreatedDate(timestamp) {
   const parsedDate = resolveDateValue(timestamp);
 
@@ -241,6 +274,46 @@ function normalizeAnomalyRecord(record) {
     repair_date: record.repair_date || null,
     repaired_by: record.repaired_by || "",
   };
+}
+
+function dedupeAnomaliesForDisplay(items) {
+  return items.reduce((dedupedItems, item) => {
+    const existingIndex = dedupedItems.findIndex((currentItem) => {
+      if (currentItem.anomaly !== item.anomaly) {
+        return false;
+      }
+
+      return (
+        calculateDistanceMeters(
+          currentItem.lat,
+          currentItem.lng,
+          item.lat,
+          item.lng
+        ) <= 10
+      );
+    });
+
+    if (existingIndex === -1) {
+      dedupedItems.push(item);
+      return dedupedItems;
+    }
+
+    const existingItem = dedupedItems[existingIndex];
+
+    dedupedItems[existingIndex] = {
+      ...existingItem,
+      reports_count:
+        (existingItem.reports_count || 1) + (item.reports_count || 1),
+      confidence: Math.max(existingItem.confidence || 0, item.confidence || 0),
+      repair_note: existingItem.repair_note || item.repair_note || "",
+      repair_photo_url:
+        existingItem.repair_photo_url || item.repair_photo_url || "",
+      repair_date: existingItem.repair_date || item.repair_date || null,
+      repaired_by: existingItem.repaired_by || item.repaired_by || "",
+    };
+
+    return dedupedItems;
+  }, []);
 }
 
 function App() {
@@ -527,7 +600,8 @@ function App() {
           (item) => item.municipality_id === userProfile.municipality_id
         )
       : anomalies;
-  const displayAnomalies = visibleAnomalies.filter(
+  const dedupedVisibleAnomalies = dedupeAnomaliesForDisplay(visibleAnomalies);
+  const displayAnomalies = dedupedVisibleAnomalies.filter(
     (item) => item.category !== UNCLASSIFIED_CATEGORY
   );
 
