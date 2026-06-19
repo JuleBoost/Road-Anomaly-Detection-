@@ -591,10 +591,12 @@ function App() {
     "Road Damage",
     "Road Safety Objects",
     "Traffic Infrastructure",
-  ].map((category) => ({
-    name: category,
-    value: filteredAnomalies.filter((item) => item.category === category).length,
-  }));
+  ]
+    .map((category) => ({
+      name: category,
+      value: filteredAnomalies.filter((item) => item.category === category).length,
+    }))
+    .filter((item) => item.value > 0);
   const statusChartData = STATUS_OPTIONS.map((status) => ({
     name: status,
     value: filteredAnomalies.filter((item) => item.status === status).length,
@@ -851,27 +853,32 @@ function App() {
               <p>Issue categories in the current dashboard scope.</p>
             </div>
             <div className="chart-wrapper">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={categoryChartData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={100}
-                    label
-                  >
-                    {categoryChartData.map((entry, index) => (
-                      <Cell
-                        key={entry.name}
-                        fill={CATEGORY_CHART_COLORS[index % CATEGORY_CHART_COLORS.length]}
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+              {categoryChartData.length === 0 ? (
+                <div className="chart-empty-state">No category data available.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={categoryChartData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={100}
+                      label={categoryChartData.length > 1}
+                      labelLine={categoryChartData.length > 1}
+                    >
+                      {categoryChartData.map((entry, index) => (
+                        <Cell
+                          key={entry.name}
+                          fill={CATEGORY_CHART_COLORS[index % CATEGORY_CHART_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 
