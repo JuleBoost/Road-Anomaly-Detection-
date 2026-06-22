@@ -460,11 +460,17 @@ tr:hover {
   color: #bfdbfe;
   text-decoration: none;
   font-weight: 600;
+  text-align: center;
 }
 
 .address-link:hover {
   color: #ffffff;
   text-decoration: underline;
+}
+
+.address-link-disabled {
+  color: #94a3b8;
+  cursor: default;
 }
 
 .maps-btn {
@@ -484,6 +490,33 @@ tr:hover {
 .maps-btn:hover {
   background: rgba(37, 99, 235, 0.3);
   color: #ffffff;
+}
+
+.maps-btn-disabled {
+  background: rgba(15, 23, 42, 0.55);
+  border-color: rgba(148, 163, 184, 0.22);
+  color: #94a3b8;
+  cursor: default;
+}
+
+.map-popup {
+  min-width: 220px;
+  color: #0f172a;
+}
+
+.map-popup h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.map-popup p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.map-popup .maps-btn {
+  margin-top: 8px;
 }
 
 .show-more-wrap {

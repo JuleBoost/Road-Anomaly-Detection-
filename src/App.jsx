@@ -1,21 +1,4 @@
 import { useEffect, useState } from "react";
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  limit,
-  orderBy,
-  query,
-  startAfter,
-  updateDoc,
-} from "firebase/firestore";
-import {
-  signInWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-} from "firebase/auth";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
@@ -29,27 +12,41 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { db, auth, storage } from "./firebase";
+import { supabase } from "./supabaseClient";
 import { findMunicipalityById } from "./utils/municipalityDirectory";
 import MapView from "./MapView";
 import "./App.css";
 
-const ROAD_DAMAGE_TYPES = ["pothole", "faded-marking"];
+const ROAD_DAMAGE_TYPES = ["pothole"];
 const ROAD_SAFETY_OBJECT_TYPES = [
   "fallen-cone",
   "fallen-barrier",
   "fallen-pole",
 ];
-const TRAFFIC_INFRASTRUCTURE_TYPES = [
+const TRAFFIC_INFRASTRUCTURE_TYPES = ["damaged-traffic-sign"];
+const CLEANLINESS_TYPES = ["litter", "bin-full"];
+const ACCEPTED_ANOMALY_TYPES = [
+  "pothole",
+  "fallen-barrier",
+  "fallen-cone",
+  "fallen-pole",
   "damaged-traffic-sign",
-  "damaged-street-light",
+  "litter",
+  "bin-full",
+];
+const EXCLUDED_ANOMALY_TYPES = [
+  "damagedstreetlight",
+  "fadedroadmarking",
+  "fadedmarking",
+  "whitemarking",
+  "whitemarkings",
+  "roadmarking",
 ];
 const STATUS_OPTIONS = [
   "New",
   "Under Review",
   "Assigned",
   "Repaired",
-  "Verified",
   "Rejected",
 ];
 const CATEGORY_CHART_COLORS = ["#ef4444", "#f97316", "#eab308", "#60a5fa"];
@@ -57,13 +54,12 @@ const ANOMALIES_PAGE_SIZE = 10;
 const UNKNOWN_ANOMALY_LABEL = "Unknown Anomaly";
 const UNCLASSIFIED_CATEGORY = "Unclassified";
 const OPEN_ISSUE_STATUSES = ["New", "Under Review", "Assigned"];
-const REPAIRED_ISSUE_STATUSES = ["Repaired", "Verified"];
+const REPAIRED_ISSUE_STATUSES = ["Repaired"];
 const STATUS_WORKFLOW_OPTIONS = {
   New: ["New", "Under Review"],
   "Under Review": ["Under Review", "Assigned", "Rejected"],
   Assigned: ["Assigned", "Repaired"],
-  Repaired: ["Repaired", "Verified"],
-  Verified: ["Verified"],
+  Repaired: ["Repaired"],
   Rejected: ["Rejected"],
 };
 const STATUS_PRIORITY = {
@@ -71,8 +67,7 @@ const STATUS_PRIORITY = {
   "Under Review": 1,
   Assigned: 2,
   Repaired: 3,
-  Verified: 4,
-  Rejected: 5,
+  Rejected: 4,
 };
 const UNKNOWN_LOCATION_DETAILS = {
   municipality_name: "Unknown",
@@ -85,10 +80,14 @@ function normalizeUserRole(role) {
     return "municipality_manager";
   }
 
-  return role || "municipality_viewer";
+  return role || "public_viewer";
 }
 
-function canViewAll(userProfile) {
+function canSeeAllAnomalies(userProfile) {
+  if (!userProfile) {
+    return true;
+  }
+
   return normalizeUserRole(userProfile?.role) === "admin";
 }
 
@@ -111,10 +110,20 @@ function canExportReports(userProfile) {
 }
 
 function isViewerRole(userProfile) {
-  return normalizeUserRole(userProfile?.role) === "municipality_viewer";
+  return ["public_viewer", "municipality_viewer"].includes(
+    normalizeUserRole(userProfile?.role)
+  );
+}
+
+function isPublicViewer(userProfile) {
+  return normalizeUserRole(userProfile?.role) === "public_viewer";
 }
 
 function getRoleBadgeLabel(userProfile) {
+  if (!userProfile) {
+    return "Public Viewer";
+  }
+
   const normalizedRole = normalizeUserRole(userProfile?.role);
 
   if (normalizedRole === "admin") {
@@ -204,6 +213,34 @@ function getShortAddress(address) {
   return parts[0] || address;
 }
 
+function getCoordinateValues(item) {
+  const latitude = Number(item?.lat);
+  const longitude = Number(item?.lng);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return {
+    latitude,
+    longitude,
+  };
+}
+
+function getGoogleMapsUrl(item) {
+  const coordinates = getCoordinateValues(item);
+
+  if (!coordinates) {
+    return null;
+  }
+
+  return `https://www.google.com/maps?q=${coordinates.latitude},${coordinates.longitude}`;
+}
+
+function getLocationLabel(address) {
+  return address?.trim() ? address : "Unknown location";
+}
+
 function toDateInputValue(value) {
   if (!value) {
     return "";
@@ -224,7 +261,7 @@ function toDateInputValue(value) {
 }
 
 function getCategory(anomaly) {
-  const normalizedAnomaly = anomaly?.toLowerCase?.() ?? "";
+  const normalizedAnomaly = normalizeAnomalyTypeForLabel(anomaly);
 
   if (ROAD_DAMAGE_TYPES.includes(normalizedAnomaly)) {
     return "Road Damage";
@@ -238,18 +275,22 @@ function getCategory(anomaly) {
     return "Traffic Infrastructure";
   }
 
+  if (CLEANLINESS_TYPES.includes(normalizedAnomaly)) {
+    return "Cleanliness";
+  }
+
   return UNCLASSIFIED_CATEGORY;
 }
 
 function getSeverity(anomaly) {
-  const normalizedAnomaly = anomaly?.toLowerCase?.() ?? "";
+  const normalizedAnomaly = normalizeAnomalyTypeForLabel(anomaly);
 
   if (
     [
       "pothole",
       "fallen-barrier",
       "fallen-pole",
-      "damaged-street-light",
+      "bin-full",
     ].includes(normalizedAnomaly)
   ) {
     return "High";
@@ -257,9 +298,9 @@ function getSeverity(anomaly) {
 
   if (
     [
-      "faded-marking",
       "fallen-cone",
       "damaged-traffic-sign",
+      "litter",
     ].includes(normalizedAnomaly)
   ) {
     return "Medium";
@@ -269,11 +310,29 @@ function getSeverity(anomaly) {
 }
 
 function normalizeAnomalyType(anomaly) {
-  return anomaly?.toString().trim().toLowerCase().replace(/\s+/g, "-") || "";
+  return anomaly?.toString().trim().toLowerCase().replace(/[^a-z0-9]/g, "") || "";
+}
+
+function normalizeAnomalyTypeForLabel(anomaly) {
+  return (
+    anomaly?.toString().trim().toLowerCase().replace(/[\s_]+/g, "-") || ""
+  );
+}
+
+function getSafeEvidenceFileName(fileName) {
+  return fileName?.replace(/[^\w.-]/g, "_") || "repair-photo";
+}
+
+function isExcludedAnomalyType(anomaly) {
+  return EXCLUDED_ANOMALY_TYPES.includes(normalizeAnomalyType(anomaly));
+}
+
+function isAcceptedAnomalyType(anomaly) {
+  return ACCEPTED_ANOMALY_TYPES.includes(normalizeAnomalyTypeForLabel(anomaly));
 }
 
 function formatAnomalyLabel(anomaly) {
-  const normalizedAnomaly = normalizeAnomalyType(anomaly);
+  const normalizedAnomaly = normalizeAnomalyTypeForLabel(anomaly);
 
   if (!normalizedAnomaly) {
     return UNKNOWN_ANOMALY_LABEL;
@@ -319,7 +378,11 @@ function calculateDistanceMeters(lat1, lng1, lat2, lng2) {
 }
 
 function normalizeAddressValue(address) {
-  return address?.toString().trim().toLowerCase() || "";
+  const normalized = address?.toString().trim().toLowerCase() || "";
+  if (normalized === "unknown" || normalized === "unknown location") {
+    return "";
+  }
+  return normalized;
 }
 
 function isSameVisibleIssue(firstItem, secondItem) {
@@ -330,26 +393,31 @@ function isSameVisibleIssue(firstItem, secondItem) {
     return false;
   }
 
-  const firstAddress = normalizeAddressValue(firstItem.address);
-  const secondAddress = normalizeAddressValue(secondItem.address);
+  const firstLat = Number(firstItem.lat);
+  const firstLng = Number(firstItem.lng);
+  const secondLat = Number(secondItem.lat);
+  const secondLng = Number(secondItem.lng);
+  const firstHasCoords =
+    Number.isFinite(firstLat) && Number.isFinite(firstLng);
+  const secondHasCoords =
+    Number.isFinite(secondLat) && Number.isFinite(secondLng);
 
   if (
-    firstAddress &&
-    secondAddress &&
-    firstAddress !== "unknown location" &&
-    firstAddress === secondAddress
+    firstHasCoords &&
+    secondHasCoords &&
+    calculateDistanceMeters(firstLat, firstLng, secondLat, secondLng) <= 10
   ) {
     return true;
   }
 
-  return (
-    calculateDistanceMeters(
-      firstItem.lat,
-      firstItem.lng,
-      secondItem.lat,
-      secondItem.lng
-    ) <= 10
-  );
+  const firstAddress = normalizeAddressValue(firstItem.address);
+  const secondAddress = normalizeAddressValue(secondItem.address);
+
+  if (firstAddress && secondAddress && firstAddress === secondAddress) {
+    return true;
+  }
+
+  return false;
 }
 
 function normalizeCategoryValue(category, anomaly) {
@@ -361,6 +429,10 @@ function normalizeCategoryValue(category, anomaly) {
 }
 
 function normalizeStatusValue(status) {
+  if (status === "Verified") {
+    return "Repaired";
+  }
+
   return STATUS_OPTIONS.includes(status) ? status : "New";
 }
 
@@ -480,13 +552,14 @@ function App() {
   const [anomalies, setAnomalies] = useState([]);
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
+  const [profileError, setProfileError] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [selectedSeverity, setSelectedSeverity] = useState("All");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [searchText, setSearchText] = useState("");
   const [loadingAnomalies, setLoadingAnomalies] = useState(false);
-  const [lastVisibleDoc, setLastVisibleDoc] = useState(null);
+  const [anomaliesOffset, setAnomaliesOffset] = useState(0);
   const [hasMoreAnomalies, setHasMoreAnomalies] = useState(true);
   const [exportLoading, setExportLoading] = useState(null);
   const [repairEvidenceTarget, setRepairEvidenceTarget] = useState(null);
@@ -499,48 +572,135 @@ function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [showLoginForm, setShowLoginForm] = useState(false);
+  const [authInitialized, setAuthInitialized] = useState(false);
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+    let isMounted = true;
+
+    const initializeSession = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!isMounted) {
+        return;
+      }
+
+      setUser(session?.user ?? null);
       setUserProfile(null);
-      setLoadingProfile(Boolean(currentUser));
+      setLoadingProfile(Boolean(session?.user));
+      setAnomalies([]);
+      setAnomaliesOffset(0);
+      setHasMoreAnomalies(true);
+      setAuthInitialized(true);
+    };
+
+    initializeSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) {
+        return;
+      }
+
+      setUser(session?.user ?? null);
+      setUserProfile(null);
+      setLoadingProfile(Boolean(session?.user));
+      setAnomalies([]);
+      setAnomaliesOffset(0);
+      setHasMoreAnomalies(true);
+      setAuthInitialized(true);
+      setShowLoginForm(false);
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
     if (!user) {
       setUserProfile(null);
+      setProfileError("");
       setLoadingProfile(false);
       return;
     }
 
     const loadUserProfile = async () => {
       setLoadingProfile(true);
+      setProfileError("");
 
       try {
-        const userProfileRef = doc(db, "users", user.uid);
-        const userProfileSnapshot = await getDoc(userProfileRef);
+        const { data: profileData, error } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .single();
 
-        if (userProfileSnapshot.exists()) {
-          const profileData = userProfileSnapshot.data();
+        if (error) {
+          if (error.code === "PGRST116") {
+            setUserProfile(null);
+            setProfileError(
+              "Your account is not assigned to any municipality. Please contact the administrator."
+            );
+            return;
+          }
+
+          throw error;
+        }
+
+        if (!profileData) {
+          setUserProfile(null);
+          setProfileError(
+            "Your account is not assigned to any municipality. Please contact the administrator."
+          );
+          return;
+        }
+
+        const normalizedRole = normalizeUserRole(profileData.role);
+        const municipalityId = profileData?.municipality_id || "";
+
+        if (normalizedRole === "admin") {
           setUserProfile({
             ...profileData,
-            role: normalizeUserRole(profileData.role),
+            role: "admin",
           });
-        } else {
-          setUserProfile({
-            role: "municipality_manager",
-            municipality_id: "",
-          });
+          return;
         }
+
+        if (
+          normalizedRole === "municipality_manager" ||
+          normalizedRole === "municipality_viewer"
+        ) {
+          if (!municipalityId) {
+            setUserProfile(null);
+            setProfileError(
+              "Your account is not assigned to any municipality. Please contact the administrator."
+            );
+            return;
+          }
+
+          setUserProfile({
+            ...profileData,
+            role: normalizedRole,
+            municipality_id: municipalityId,
+          });
+          return;
+        }
+
+        setUserProfile(null);
+        setProfileError(
+          "Your account role is invalid. Please contact the administrator."
+        );
       } catch (error) {
-        setUserProfile({
-          role: "municipality_manager",
-          municipality_id: "",
-        });
+        console.error("[RoadSense] User profile load failed:", error);
+        setUserProfile(null);
+        setProfileError(
+          "Failed to load your municipality access. Please contact the administrator."
+        );
       } finally {
         setLoadingProfile(false);
       }
@@ -550,68 +710,90 @@ function App() {
   }, [user]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!authInitialized || (user && loadingProfile)) {
+      return;
+    }
 
     fetchAnomalies({ reset: true });
-  }, [user]);
+  }, [authInitialized, user, userProfile, loadingProfile, profileError]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoginError("");
 
     try {
-      await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+      const { error } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: loginPassword,
+      });
+
+      if (error) {
+        throw error;
+      }
+      setShowLoginForm(false);
     } catch (error) {
       setLoginError("Wrong email or password");
     }
   };
 
   const handleLogout = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
     setAnomalies([]);
-    setLastVisibleDoc(null);
+    setAnomaliesOffset(0);
     setHasMoreAnomalies(true);
     setUserProfile(null);
+    setProfileError("");
     setLoadingProfile(false);
     setLoadingAnomalies(false);
+    setShowLoginForm(false);
   };
 
   const fetchAnomalies = async ({ reset = false } = {}) => {
-    if (!user) {
-      return;
-    }
-
-    if (!reset && (!hasMoreAnomalies || lastVisibleDoc === null)) {
+    if (!reset && !hasMoreAnomalies) {
       return;
     }
 
     setLoadingAnomalies(true);
 
     try {
-      const queryConstraints = [
-        orderBy("timestamp", "desc"),
-        limit(ANOMALIES_PAGE_SIZE),
-      ];
+      const hasAuthenticatedMunicipalityScope =
+        user && userProfile && !profileError && !canSeeAllAnomalies(userProfile);
 
-      if (!reset && lastVisibleDoc) {
-        queryConstraints.splice(1, 0, startAfter(lastVisibleDoc));
+      if (hasAuthenticatedMunicipalityScope && !userProfile?.municipality_id) {
+        setHasMoreAnomalies(false);
+        return;
       }
 
-      const snapshot = await getDocs(
-        query(collection(db, "anomalies"), ...queryConstraints)
+      const offset = reset ? 0 : anomaliesOffset;
+      let query = supabase.from("anomalies").select("*");
+
+      if (!hasAuthenticatedMunicipalityScope) {
+        query = query.order("timestamp", { ascending: false });
+      } else {
+        query = query
+          .eq("municipality_id", userProfile.municipality_id)
+          .order("timestamp", { ascending: false });
+      }
+
+      const { data, error } = await query.range(
+        offset,
+        offset + ANOMALIES_PAGE_SIZE - 1
       );
 
-      const data = snapshot.docs.map((doc) =>
+      if (error) {
+        throw error;
+      }
+
+      const normalizedData = (data || []).map((record) =>
         normalizeAnomalyRecord({
-          id: doc.id,
-          ...doc.data(),
+          ...record,
         })
       );
 
-      setLastVisibleDoc(snapshot.docs.at(-1) || null);
-      setHasMoreAnomalies(snapshot.docs.length === ANOMALIES_PAGE_SIZE);
+      setAnomaliesOffset(offset + normalizedData.length);
+      setHasMoreAnomalies(normalizedData.length === ANOMALIES_PAGE_SIZE);
       setAnomalies((current) => {
-        const mergedRecords = reset ? data : [...current, ...data];
+        const mergedRecords = reset ? normalizedData : [...current, ...normalizedData];
         const uniqueRecords = Array.from(
           new Map(mergedRecords.map((item) => [item.id, item])).values()
         );
@@ -623,6 +805,8 @@ function App() {
           return secondTimestamp - firstTimestamp;
         });
       });
+    } catch (error) {
+      console.error("[RoadSense] Anomalies load failed:", error);
     } finally {
       setLoadingAnomalies(false);
     }
@@ -649,18 +833,26 @@ function App() {
         anomalyId,
         newStatus: normalizedNewStatus,
       });
-      const anomalyRef = doc(db, "anomalies", anomalyId);
-      await updateDoc(anomalyRef, {
-        status: normalizedNewStatus,
-        updated_at: new Date(),
-      });
+      const nextUpdatedAt = new Date().toISOString();
+      const { error } = await supabase
+        .from("anomalies")
+        .update({
+          status: normalizedNewStatus,
+          updated_at: nextUpdatedAt,
+        })
+        .eq("id", anomalyId);
+
+      if (error) {
+        throw error;
+      }
+
       setAnomalies((current) =>
         current.map((item) =>
           item.id === anomalyId
             ? {
                 ...item,
                 status: normalizedNewStatus,
-                updated_at: new Date(),
+                updated_at: nextUpdatedAt,
               }
             : item
         )
@@ -671,8 +863,8 @@ function App() {
       });
     } catch (error) {
       console.error("[RoadSense] Status update failed:", {
+        status: normalizedNewStatus,
         anomalyId,
-        newStatus: normalizedNewStatus,
         error,
       });
       alert("Failed to update status");
@@ -714,25 +906,49 @@ function App() {
 
     try {
       let repairPhotoUrl = repairEvidenceTarget.repair_photo_url || "";
-      const nextRepairDate = repairDate ? new Date(repairDate) : new Date();
+      const nextRepairDate = repairDate
+        ? new Date(repairDate).toISOString()
+        : new Date().toISOString();
       const nextRepairedBy = repairedBy || user?.email || "Unknown";
+      const nextUpdatedAt = new Date().toISOString();
+      const repairEvidenceAddedAt = new Date().toISOString();
 
       if (repairPhotoFile) {
-        const storageRef = ref(
-          storage,
-          `repair-evidence/${repairEvidenceTarget.id}/${Date.now()}-${repairPhotoFile.name}`
-        );
-        await uploadBytes(storageRef, repairPhotoFile);
-        repairPhotoUrl = await getDownloadURL(storageRef);
+        const filePath = `${repairEvidenceTarget.id}/${Date.now()}-${getSafeEvidenceFileName(
+          repairPhotoFile.name
+        )}`;
+        const { error: uploadError } = await supabase.storage
+          .from("repair-evidence")
+          .upload(filePath, repairPhotoFile, {
+            upsert: false,
+          });
+
+        if (uploadError) {
+          throw uploadError;
+        }
+
+        const { data: publicUrlData } = supabase.storage
+          .from("repair-evidence")
+          .getPublicUrl(filePath);
+
+        repairPhotoUrl = publicUrlData?.publicUrl || "";
       }
 
-      await updateDoc(doc(db, "anomalies", repairEvidenceTarget.id), {
-        repair_note: repairNote,
-        repair_photo_url: repairPhotoUrl,
-        repair_date: nextRepairDate,
-        repaired_by: nextRepairedBy,
-        updated_at: new Date(),
-      });
+      const { error } = await supabase
+        .from("anomalies")
+        .update({
+          repair_note: repairNote,
+          repair_photo_url: repairPhotoUrl,
+          repair_date: nextRepairDate,
+          repaired_by: nextRepairedBy,
+          repair_evidence_added_at: repairEvidenceAddedAt,
+          updated_at: nextUpdatedAt,
+        })
+        .eq("id", repairEvidenceTarget.id);
+
+      if (error) {
+        throw error;
+      }
 
       setAnomalies((current) =>
         current.map((item) =>
@@ -743,11 +959,28 @@ function App() {
                 repair_photo_url: repairPhotoUrl,
                 repair_date: nextRepairDate,
                 repaired_by: nextRepairedBy,
-                updated_at: new Date(),
+                repair_evidence_added_at: repairEvidenceAddedAt,
+                updated_at: nextUpdatedAt,
               }
             : item
         )
       );
+
+      if (viewEvidenceTarget?.id === repairEvidenceTarget.id) {
+        setViewEvidenceTarget((current) =>
+          current
+            ? {
+                ...current,
+                repair_note: repairNote,
+                repair_photo_url: repairPhotoUrl,
+                repair_date: nextRepairDate,
+                repaired_by: nextRepairedBy,
+                repair_evidence_added_at: repairEvidenceAddedAt,
+                updated_at: nextUpdatedAt,
+              }
+            : current
+        );
+      }
 
       closeRepairEvidenceModal();
     } catch (error) {
@@ -756,63 +989,19 @@ function App() {
       setRepairEvidenceLoading(false);
     }
   };
-
-  if (!user) {
-    return (
-      <div className="login-page">
-        <form className="login-card" onSubmit={handleLogin}>
-          <div className="login-logo">
-            <span className="logo-dot"></span>
-            <h1>RoadSense</h1>
-          </div>
-
-          <p className="login-subtitle">Admin Dashboard Login</p>
-
-          <input
-            type="email"
-            placeholder="Email"
-            value={loginEmail}
-            onChange={(e) => setLoginEmail(e.target.value)}
-            required
-          />
-
-          <input
-            type="password"
-            placeholder="Password"
-            value={loginPassword}
-            onChange={(e) => setLoginPassword(e.target.value)}
-            required
-          />
-
-          {loginError && <p className="login-error">{loginError}</p>}
-
-          <button type="submit">Login</button>
-        </form>
-      </div>
-    );
-  }
-
-  if (loadingProfile) {
-    return (
-      <div className="login-page">
-        <div className="login-card">
-          <div className="login-logo">
-            <span className="logo-dot"></span>
-            <h1>RoadSense</h1>
-          </div>
-          <p className="login-subtitle">Loading municipality access...</p>
-        </div>
-      </div>
-    );
-  }
+  const effectiveUserProfile = profileError ? null : userProfile;
+  const showPublicAuthNotice = Boolean(user && profileError);
 
   const visibleAnomalies =
-    canViewAll(userProfile)
+    canSeeAllAnomalies(effectiveUserProfile)
       ? anomalies
       : anomalies.filter(
-          (item) => item.municipality_id === userProfile?.municipality_id
+          (item) => item.municipality_id === effectiveUserProfile?.municipality_id
         );
-  const aggregatedVisibleAnomalies = aggregateVisibleIssues(visibleAnomalies);
+  const supportedVisibleAnomalies = visibleAnomalies.filter(
+    (item) => !isExcludedAnomalyType(item.anomaly)
+  );
+  const aggregatedVisibleAnomalies = aggregateVisibleIssues(supportedVisibleAnomalies);
   const displayAnomalies = aggregatedVisibleAnomalies.filter(
     (item) => item.category !== UNCLASSIFIED_CATEGORY
   );
@@ -845,10 +1034,12 @@ function App() {
     );
   });
   const portalLabel =
-    canViewAll(userProfile)
+    !effectiveUserProfile
+      ? "Public Road Monitoring View"
+      : canSeeAllAnomalies(effectiveUserProfile)
       ? "Super Admin View"
-      : `Municipality Portal: ${userProfile?.municipality_id || "Unassigned"}`;
-  const roleBadgeLabel = getRoleBadgeLabel(userProfile);
+      : `Municipality Portal: ${effectiveUserProfile?.municipality_id || "Unassigned"}`;
+  const roleBadgeLabel = getRoleBadgeLabel(effectiveUserProfile);
 
   const openIssuesCount = filteredAnomalies.filter((a) =>
     OPEN_ISSUE_STATUSES.includes(normalizeStatusValue(a.status))
@@ -885,6 +1076,7 @@ function App() {
     "Road Damage",
     "Road Safety Objects",
     "Traffic Infrastructure",
+    "Cleanliness",
   ]
     .map((category) => ({
       name: category,
@@ -942,6 +1134,9 @@ function App() {
         "Latitude",
         "Longitude",
         "Created Date",
+        "Repair Evidence",
+        "Repair Date",
+        "Repaired By",
       ];
       const csvRows = exportRows.map((row) =>
         [
@@ -958,6 +1153,9 @@ function App() {
           row.latitude,
           row.longitude,
           row.createdDate,
+          row.repairEvidence,
+          row.repairDate,
+          row.repairedBy,
         ]
           .map((value) => `"${String(value).replaceAll('"', '""')}"`)
           .join(",")
@@ -985,9 +1183,9 @@ function App() {
       const pdf = new jsPDF({ orientation: "landscape" });
       const reportDate = new Date().toLocaleString();
       const municipalityLabel =
-        canViewAll(userProfile)
+        canSeeAllAnomalies(effectiveUserProfile)
           ? "All Visible Municipalities"
-          : userProfile?.municipality_id || "Unknown Municipality";
+          : effectiveUserProfile?.municipality_id || "Unknown Municipality";
 
       pdf.setFontSize(18);
       pdf.text("RoadSense Municipality Report", 14, 18);
@@ -1067,11 +1265,41 @@ function App() {
           <a href="#map">Map</a>
           <a href="#table">Anomalies</a>
           <span className="nav-role-badge">{roleBadgeLabel}</span>
-          <button className="logout-btn" onClick={handleLogout}>
-            Logout
-          </button>
+          {user ? (
+            <button className="logout-btn" onClick={handleLogout}>
+              Logout
+            </button>
+          ) : (
+            <button
+              className="logout-btn"
+              onClick={() => {
+                setLoginError("");
+                setShowLoginForm(true);
+              }}
+            >
+              Admin / Municipality Login
+            </button>
+          )}
         </div>
       </nav>
+
+      {loadingProfile && user && (
+        <div className="panel">
+          <div className="section-header">
+            <h2>Loading Access</h2>
+            <p>Checking municipality access for authenticated tools.</p>
+          </div>
+        </div>
+      )}
+
+      {showPublicAuthNotice && (
+        <div className="panel">
+          <div className="section-header">
+            <h2>Authenticated Tools Unavailable</h2>
+            <p>{profileError}</p>
+          </div>
+        </div>
+      )}
 
       <section className="hero" id="dashboard">
         <div>
@@ -1079,8 +1307,8 @@ function App() {
           <h1>Smart Road Monitoring Dashboard</h1>
           <p className="description">{portalLabel}</p>
           <p className="description">
-            Real-time road anomaly detection using YOLO, GPS, Firebase, and
-            live map visualization.
+            Real-time road anomaly detection using YOLO, GPS, and live map
+            visualization.
           </p>
         </div>
 
@@ -1234,6 +1462,7 @@ function App() {
               <option value="Road Damage">Road Damage</option>
               <option value="Road Safety Objects">Road Safety Objects</option>
               <option value="Traffic Infrastructure">Traffic Infrastructure</option>
+              <option value="Cleanliness">Cleanliness</option>
             </select>
           </label>
 
@@ -1283,30 +1512,24 @@ function App() {
           <p>Export the currently filtered anomaly list as CSV or PDF.</p>
         </div>
 
+        {canExportReports(effectiveUserProfile) && (
         <div className="export-actions">
           <button
             className="export-btn"
             onClick={handleExportCsv}
-            disabled={
-              !canExportReports(userProfile) ||
-              exportLoading !== null ||
-              filteredAnomalies.length === 0
-            }
+            disabled={exportLoading !== null || filteredAnomalies.length === 0}
           >
             {exportLoading === "csv" ? "Generating CSV..." : "Export CSV"}
           </button>
           <button
             className="export-btn secondary"
             onClick={handleExportPdf}
-            disabled={
-              !canExportReports(userProfile) ||
-              exportLoading !== null ||
-              filteredAnomalies.length === 0
-            }
+            disabled={exportLoading !== null || filteredAnomalies.length === 0}
           >
             {exportLoading === "pdf" ? "Generating PDF..." : "Export PDF"}
           </button>
         </div>
+      )}
       </section>
 
       <section className="panel" id="map">
@@ -1320,7 +1543,7 @@ function App() {
       <section className="panel" id="table">
         <div className="section-header">
           <h2>Anomalies Table</h2>
-          <p>All detections stored in Firebase Firestore.</p>
+          <p>All detections stored in the anomaly database.</p>
         </div>
 
         <div className="table-wrapper">
@@ -1365,38 +1588,64 @@ function App() {
                   <td>{item.reports_count || 1}</td>
                   <td>{Math.round((item.confidence || 0) * 100)}%</td>
                   <td>
-                    <div className="address-cell">
-                      <a
-                        className="address-link"
-                        href={`https://www.google.com/maps?q=${item.lat},${item.lng}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={item.address || "Unknown location"}
-                      >
-                        {getShortAddress(item.address)}
-                      </a>
-                      <a
-                        className="maps-btn"
-                        href={`https://www.google.com/maps?q=${item.lat},${item.lng}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open in Maps
-                      </a>
-                    </div>
+                    {(() => {
+                      const mapsUrl = getGoogleMapsUrl(item);
+                      const locationLabel = getLocationLabel(item.address);
+
+                      return (
+                        <div className="address-cell">
+                          {mapsUrl ? (
+                            <a
+                              className="address-link"
+                              href={mapsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={locationLabel}
+                            >
+                              {getShortAddress(locationLabel)}
+                            </a>
+                          ) : (
+                            <span
+                              className="address-link address-link-disabled"
+                              title={locationLabel}
+                            >
+                              {getShortAddress(locationLabel)}
+                            </span>
+                          )}
+                          {mapsUrl ? (
+                            <a
+                              className="maps-btn"
+                              href={mapsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open in Maps
+                            </a>
+                          ) : (
+                            <span className="maps-btn maps-btn-disabled">
+                              Location unavailable
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td>{item.lat}</td>
                   <td>{item.lng}</td>
                   <td>
                     <div className="evidence-actions">
                       {hasRepairEvidence(item) ? (
-                        <button
-                          className="evidence-btn"
-                          onClick={() => setViewEvidenceTarget(item)}
-                        >
-                          View Evidence
-                        </button>
-                      ) : canUploadEvidence(userProfile) &&
+                        isPublicViewer(effectiveUserProfile) ? (
+                          <span className="evidence-empty">Evidence available</span>
+                        ) : (
+                          <button
+                            className="evidence-btn"
+                            onClick={() => setViewEvidenceTarget(item)}
+                          >
+                            View Evidence
+                          </button>
+                        )
+                      ) : canUploadEvidence(effectiveUserProfile) &&
                         normalizeStatusValue(item.status) === "Repaired" ? (
                           <button
                             className="evidence-btn secondary"
@@ -1410,7 +1659,7 @@ function App() {
                     </div>
                   </td>
                   <td>
-                    {canUpdateStatus(userProfile) ? (
+                    {canUpdateStatus(effectiveUserProfile) ? (
                       <select
                         className="table-status-select"
                         value={normalizeStatusValue(item.status)}
@@ -1419,7 +1668,7 @@ function App() {
 
                           if (
                             e.target.value === "Repaired" &&
-                            canUploadEvidence(userProfile)
+                            canUploadEvidence(effectiveUserProfile)
                           ) {
                             openRepairEvidenceModal({
                               ...item,
@@ -1435,7 +1684,7 @@ function App() {
                         ))}
                       </select>
                     ) : (
-                      isViewerRole(userProfile) ? (
+                      isViewerRole(effectiveUserProfile) ? (
                         <span className={getStatusClassName(item.status)}>
                           {normalizeStatusValue(item.status)}
                         </span>
@@ -1558,6 +1807,50 @@ function App() {
               <p><strong>Repaired By:</strong> {viewEvidenceTarget.repaired_by || "Unknown"}</p>
             </div>
           </div>
+        </div>
+      )}
+
+      {showLoginForm && !user && (
+        <div className="modal-backdrop">
+          <form className="login-card" onSubmit={handleLogin}>
+            <div className="login-logo">
+              <span className="logo-dot"></span>
+              <h1>RoadSense</h1>
+            </div>
+
+            <p className="login-subtitle">Admin Dashboard Login</p>
+
+            <input
+              type="email"
+              placeholder="Email"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              required
+            />
+
+            <input
+              type="password"
+              placeholder="Password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              required
+            />
+
+            {loginError && <p className="login-error">{loginError}</p>}
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="export-btn secondary"
+                onClick={() => setShowLoginForm(false)}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="export-btn">
+                Login
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
