@@ -2,16 +2,19 @@ import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-const markerIcon = new L.Icon({
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  iconRetinaUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
-});
+const STATUS_MARKER_CLASS_NAMES = {
+  New: "pin-new",
+  "Under Review": "pin-under-review",
+  Assigned: "pin-assigned",
+  Repaired: "pin-repaired",
+  Rejected: "pin-rejected",
+};
+
+const ACTIVE_LEGEND_ITEMS = [
+  { label: "New", className: "pin-new" },
+  { label: "Under Review", className: "pin-under-review" },
+  { label: "Assigned", className: "pin-assigned" },
+];
 
 function getCoordinateValues(item) {
   const latitude = Number(item?.lat);
@@ -41,15 +44,50 @@ function getLocationLabel(address) {
   return address?.trim() ? address : "Unknown location";
 }
 
+function normalizeStatusValue(status) {
+  if (status === "Verified") {
+    return "Repaired";
+  }
+
+  return STATUS_MARKER_CLASS_NAMES[status] ? status : "New";
+}
+
+function getMarkerIcon(status) {
+  const normalizedStatus = normalizeStatusValue(status);
+  const markerClassName = STATUS_MARKER_CLASS_NAMES[normalizedStatus];
+
+  return L.divIcon({
+    className: "custom-map-pin-wrapper",
+    html: `
+      <span class="custom-map-pin-shadow"></span>
+      <span class="custom-map-pin ${markerClassName}"></span>
+    `,
+    iconSize: [28, 40],
+    iconAnchor: [14, 36],
+    popupAnchor: [0, -32],
+  });
+}
+
 function MapView({ anomalies }) {
   const validAnomalies = anomalies.filter((item) => getCoordinateValues(item));
 
   return (
-    <div style={{ height: "420px", width: "100%", marginTop: "20px" }}>
+    <div className="map-shell">
+      <div className="map-legend" aria-label="Active map legend">
+        <h3>Active Issues</h3>
+        {ACTIVE_LEGEND_ITEMS.map((item) => (
+          <div key={item.label} className="map-legend-item">
+            <span className="map-legend-pin">
+              <span className={`custom-map-pin ${item.className}`}></span>
+            </span>
+            <span>{item.label}</span>
+          </div>
+        ))}
+      </div>
       <MapContainer
         center={[33.8938, 35.5018]}
         zoom={10}
-        style={{ height: "100%", width: "100%", borderRadius: "12px" }}
+        style={{ height: "420px", width: "100%", borderRadius: "12px" }}
       >
         <TileLayer
           attribution="OpenStreetMap"
@@ -64,7 +102,7 @@ function MapView({ anomalies }) {
             <Marker
               key={item.id}
               position={[coordinates.latitude, coordinates.longitude]}
-              icon={markerIcon}
+              icon={getMarkerIcon(item.status)}
             >
               <Popup>
                 <div className="map-popup">

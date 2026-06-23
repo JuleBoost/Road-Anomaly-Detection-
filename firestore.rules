@@ -57,7 +57,7 @@ service cloud.firestore {
     }
 
     match /anomalies/{anomalyId} {
-      // Any signed-in client may create anomalies for now.
+      // Any signed-in client may create anomalies, if needed.
       allow create: if isAuthenticated();
 
       // Admins can read all anomalies; municipality roles can read only their own area.
@@ -69,8 +69,8 @@ service cloud.firestore {
           && sameMunicipality(resource.data)
           && municipalityManagerAllowedUpdate());
 
-      // No client-side deletes are allowed.
-      allow delete: if false;
+      // Admin should be allowed to delete anomalies if needed.
+      allow delete: if isAdmin();
     }
   }
 }

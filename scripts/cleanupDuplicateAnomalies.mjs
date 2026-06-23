@@ -14,7 +14,14 @@ const EXCLUDED_STATUSES = new Set(["Repaired", "Verified", "Rejected"]);
 const shouldApply = process.argv.includes("--apply");
 
 function normalizeAnomalyType(anomaly) {
-  return anomaly?.toString().trim().toLowerCase().replace(/\s+/g, "-") || "";
+  return (
+    anomaly
+      ?.toString()
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "") ||
+    ""
+  );
 }
 
 function resolveDateValue(value) {
@@ -91,6 +98,12 @@ function buildDuplicateGroups(records) {
   const groups = [];
   const consumedIds = new Set();
 
+  const hasValidCoordinates = (record) => {
+    const lat = Number(record.lat);
+    const lng = Number(record.lng);
+    return Number.isFinite(lat) && Number.isFinite(lng);
+  };
+
   records.forEach((record) => {
     if (consumedIds.has(record.id)) {
       return;
@@ -118,14 +131,17 @@ function buildDuplicateGroups(records) {
         continue;
       }
 
-      const isNearby = group.some(
-        (groupedRecord) =>
-          calculateDistanceMeters(
-            groupedRecord.lat,
-            groupedRecord.lng,
-            candidate.lat,
-            candidate.lng
-          ) <= DISTANCE_THRESHOLD_METERS
+      if (!hasValidCoordinates(record) || !hasValidCoordinates(candidate)) {
+        continue;
+      }
+
+      const isNearby = group.some((groupedRecord) =>
+        calculateDistanceMeters(
+          groupedRecord.lat,
+          groupedRecord.lng,
+          candidate.lat,
+          candidate.lng
+        ) <= DISTANCE_THRESHOLD_METERS
       );
 
       if (!isNearby) {

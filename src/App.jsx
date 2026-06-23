@@ -1033,6 +1033,9 @@ function App() {
       matchesCategory && matchesSeverity && matchesStatus && matchesSearch
     );
   });
+  const liveMapAnomalies = filteredAnomalies.filter((item) =>
+    OPEN_ISSUE_STATUSES.includes(normalizeStatusValue(item.status))
+  );
   const portalLabel =
     !effectiveUserProfile
       ? "Public Road Monitoring View"
@@ -1535,9 +1538,9 @@ function App() {
       <section className="panel" id="map">
         <div className="section-header">
           <h2>Lebanon Live Map</h2>
-          <p>Detected anomalies are shown as live map markers.</p>
+          <p>Detected anomalies are shown as live map markers for active issues only.</p>
         </div>
-        <MapView anomalies={filteredAnomalies} />
+        <MapView anomalies={liveMapAnomalies} />
       </section>
 
       <section className="panel" id="table">
