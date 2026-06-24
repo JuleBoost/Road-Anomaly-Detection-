@@ -55,6 +55,7 @@ const UNKNOWN_ANOMALY_LABEL = "Unknown Anomaly";
 const UNCLASSIFIED_CATEGORY = "Unclassified";
 const OPEN_ISSUE_STATUSES = ["New", "Under Review", "Assigned"];
 const REPAIRED_ISSUE_STATUSES = ["Repaired"];
+const DETECTION_DISPLAY_TIME_ZONE = "UTC";
 const STATUS_WORKFLOW_OPTIONS = {
   New: ["New", "Under Review"],
   "Under Review": ["Under Review", "Assigned", "Rejected"],
@@ -178,18 +179,105 @@ function resolveDateValue(value) {
 function getAnomalyDate(anomaly) {
   return (
     resolveDateValue(anomaly?.timestamp) ||
-    resolveDateValue(anomaly?.created_at) ||
     resolveDateValue(anomaly?.first_seen_at) ||
+    resolveDateValue(anomaly?.updated_at) ||
+    resolveDateValue(anomaly?.created_at) ||
     resolveDateValue(anomaly?.last_seen_at)
   );
 }
 
 function formatCreatedDate(timestamp) {
-  const parsedDate = resolveDateValue(timestamp);
+  return formatDetectionDateTime(timestamp);
+}
 
-  return parsedDate === null
-    ? "Unknown"
-    : parsedDate.toLocaleString();
+function formatDetectionDateTime(value) {
+  const parsedDate = resolveDateValue(value);
+
+  if (parsedDate === null) {
+    return "Unknown date";
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: DETECTION_DISPLAY_TIME_ZONE,
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(parsedDate);
+}
+
+function getDetectionDateTime(anomaly) {
+  return (
+    resolveDateValue(anomaly?.timestamp) ||
+    resolveDateValue(anomaly?.first_seen_at) ||
+    resolveDateValue(anomaly?.updated_at)
+  );
+}
+
+function getDetectionSearchValues(anomaly) {
+  const detectionDate = getDetectionDateTime(anomaly);
+
+  if (!detectionDate) {
+    return [];
+  }
+
+  return [
+    formatDetectionDateTime(detectionDate),
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: DETECTION_DISPLAY_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(detectionDate),
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: DETECTION_DISPLAY_TIME_ZONE,
+      day: "2-digit",
+      month: "short",
+    }).format(detectionDate),
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: DETECTION_DISPLAY_TIME_ZONE,
+      month: "short",
+      day: "2-digit",
+    }).format(detectionDate),
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: DETECTION_DISPLAY_TIME_ZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(detectionDate),
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: DETECTION_DISPLAY_TIME_ZONE,
+      year: "numeric",
+    }).format(detectionDate),
+  ];
+}
+
+function getFilterBoundaryDate(value, endOfDay = false) {
+  if (!value) {
+    return null;
+  }
+
+  const boundary = endOfDay
+    ? new Date(`${value}T23:59:59.999`)
+    : new Date(`${value}T00:00:00.000`);
+
+  return Number.isNaN(boundary.getTime()) ? null : boundary;
+}
+
+function compareAnomaliesByDetectionDate(first, second) {
+  const secondDetectionTime = getDetectionDateTime(second)?.getTime() || 0;
+  const firstDetectionTime = getDetectionDateTime(first)?.getTime() || 0;
+
+  if (secondDetectionTime !== firstDetectionTime) {
+    return secondDetectionTime - firstDetectionTime;
+  }
+
+  const secondUpdatedTime = resolveDateValue(second?.updated_at)?.getTime() || 0;
+  const firstUpdatedTime = resolveDateValue(first?.updated_at)?.getTime() || 0;
+
+  return secondUpdatedTime - firstUpdatedTime;
 }
 
 function getShortAddress(address) {
@@ -541,10 +629,7 @@ function aggregateVisibleIssues(items) {
 
     return aggregatedItems;
   }, []).sort((first, second) => {
-    const secondDate = getAnomalyDate(second)?.getTime() || 0;
-    const firstDate = getAnomalyDate(first)?.getTime() || 0;
-
-    return secondDate - firstDate;
+    return compareAnomaliesByDetectionDate(first, second);
   });
 }
 
@@ -558,6 +643,8 @@ function App() {
   const [selectedSeverity, setSelectedSeverity] = useState("All");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [searchText, setSearchText] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [loadingAnomalies, setLoadingAnomalies] = useState(false);
   const [anomaliesOffset, setAnomaliesOffset] = useState(0);
   const [hasMoreAnomalies, setHasMoreAnomalies] = useState(true);
@@ -798,12 +885,7 @@ function App() {
           new Map(mergedRecords.map((item) => [item.id, item])).values()
         );
 
-        return uniqueRecords.sort((first, second) => {
-          const firstTimestamp = getAnomalyDate(first)?.getTime() || 0;
-          const secondTimestamp = getAnomalyDate(second)?.getTime() || 0;
-
-          return secondTimestamp - firstTimestamp;
-        });
+        return uniqueRecords.sort(compareAnomaliesByDetectionDate);
       });
     } catch (error) {
       console.error("[RoadSense] Anomalies load failed:", error);
@@ -1007,6 +1089,8 @@ function App() {
   );
 
   const normalizedSearchText = searchText.trim().toLowerCase();
+  const fromDateBoundary = getFilterBoundaryDate(fromDate, false);
+  const toDateBoundary = getFilterBoundaryDate(toDate, true);
   const filteredAnomalies = displayAnomalies.filter((item) => {
     const matchesCategory =
       selectedCategory === "All" || item.category === selectedCategory;
@@ -1014,6 +1098,13 @@ function App() {
       selectedSeverity === "All" || item.severity === selectedSeverity;
     const matchesStatus =
       selectedStatus === "All" || item.status === selectedStatus;
+    const detectionDate = getDetectionDateTime(item);
+    const matchesFromDate =
+      fromDateBoundary === null ||
+      (detectionDate !== null && detectionDate >= fromDateBoundary);
+    const matchesToDate =
+      toDateBoundary === null ||
+      (detectionDate !== null && detectionDate <= toDateBoundary);
     const matchesSearch =
       normalizedSearchText === "" ||
       [
@@ -1023,6 +1114,7 @@ function App() {
         item.municipality_name,
         item.district,
         item.governorate,
+        ...getDetectionSearchValues(item),
       ]
         .filter(Boolean)
         .some((value) =>
@@ -1030,7 +1122,12 @@ function App() {
         );
 
     return (
-      matchesCategory && matchesSeverity && matchesStatus && matchesSearch
+      matchesCategory &&
+      matchesSeverity &&
+      matchesStatus &&
+      matchesFromDate &&
+      matchesToDate &&
+      matchesSearch
     );
   });
   const liveMapAnomalies = filteredAnomalies.filter((item) =>
@@ -1105,6 +1202,7 @@ function App() {
     address: item.address || "Unknown location",
     latitude: item.lat ?? "Unknown",
     longitude: item.lng ?? "Unknown",
+    detectionDateTime: formatDetectionDateTime(getDetectionDateTime(item)),
     createdDate: formatCreatedDate(getAnomalyDate(item)),
     repairEvidence: item.repair_note
       ? `Note: ${item.repair_note}`
@@ -1136,6 +1234,7 @@ function App() {
         "Address",
         "Latitude",
         "Longitude",
+        "Detection Date & Time",
         "Created Date",
         "Repair Evidence",
         "Repair Date",
@@ -1155,6 +1254,7 @@ function App() {
           row.address,
           row.latitude,
           row.longitude,
+          row.detectionDateTime,
           row.createdDate,
           row.repairEvidence,
           row.repairDate,
@@ -1184,7 +1284,7 @@ function App() {
 
     try {
       const pdf = new jsPDF({ orientation: "landscape" });
-      const reportDate = new Date().toLocaleString();
+      const reportDate = formatDetectionDateTime(new Date());
       const municipalityLabel =
         canSeeAllAnomalies(effectiveUserProfile)
           ? "All Visible Municipalities"
@@ -1216,6 +1316,7 @@ function App() {
             "Address",
             "Latitude",
             "Longitude",
+            "Detection Date & Time",
             "Created Date",
             "Repair Evidence",
             "Repair Date",
@@ -1235,6 +1336,7 @@ function App() {
           row.address,
           row.latitude,
           row.longitude,
+          row.detectionDateTime,
           row.createdDate,
           row.repairEvidence,
           row.repairDate,
@@ -1501,9 +1603,27 @@ function App() {
             <span>Search</span>
             <input
               type="text"
-              placeholder="Search anomaly, address, or municipality"
+              placeholder="Search anomaly, address, municipality, or date/time"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
+            />
+          </label>
+
+          <label className="filter-field">
+            <span>From Date</span>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+            />
+          </label>
+
+          <label className="filter-field">
+            <span>To Date</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
             />
           </label>
         </div>
@@ -1562,6 +1682,7 @@ function App() {
                 <th>Governorate</th>
                 <th>Reports Count</th>
                 <th>Confidence</th>
+                <th>Detection Date &amp; Time</th>
                 <th>Address</th>
                 <th>Latitude</th>
                 <th>Longitude</th>
@@ -1590,6 +1711,7 @@ function App() {
                   <td>{item.governorate || "Unknown"}</td>
                   <td>{item.reports_count || 1}</td>
                   <td>{Math.round((item.confidence || 0) * 100)}%</td>
+                  <td>{formatDetectionDateTime(getDetectionDateTime(item))}</td>
                   <td>
                     {(() => {
                       const mapsUrl = getGoogleMapsUrl(item);
