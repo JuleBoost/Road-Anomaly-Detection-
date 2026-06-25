@@ -2,6 +2,12 @@
 
 A real-time road anomaly detection system using a phone camera mounted on a car dashboard. Detections are stored with GPS coordinates and displayed on a live web dashboard.
 
+## 📱 Mobile App
+
+Flutter app (iOS & Android) with CoreML/on-device inference and GPS detection.
+
+👉 [Road-Detection-Mobile-App](https://github.com/JuleBoost/Road-Detection-Mobile-App)
+
 🌐 **Live Dashboard:** https://road-sense-dashboard.vercel.app
 
 ---
