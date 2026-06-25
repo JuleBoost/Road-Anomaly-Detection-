@@ -51,7 +51,7 @@ Total: 30,000+ images across train/val/test splits.
 
 | Layer | Tech |
 |-------|------|
-| Model | YOLOv11n (ONNX / CoreML) |
+| Model | YOLOv11n (CoreML) |
 | Training | Google Colab + Roboflow |
 | Mobile App | Flutter (iOS) with CoreML |
 | Backend | Supabase (DB + Storage + Auth) |
