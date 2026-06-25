@@ -1,6 +1,6 @@
 # 🚗 Road Anomaly Detection System
 
-A real-time road anomaly detection system using a phone camera mounted on a car dashboard. Captures video, extracts frames, and runs YOLOv11s inference to detect road hazards. Detections are stored in Firebase with GPS coordinates and pushed as notifications to a live web dashboard.
+A real-time road anomaly detection system using a phone camera mounted on a car dashboard. Captures video, extracts frames, and runs YOLOv11s inference to detect road hazards. Detections are surfaced through the Supabase-powered RoadSense dashboard.
 
 ## Detected Anomalies
 - 🕳️ Pothole
@@ -15,8 +15,8 @@ A real-time road anomaly detection system using a phone camera mounted on a car 
 | Training | Google Colab + Roboflow dataset |
 | Backend | FastAPI (Hugging Face Spaces) |
 | Frontend | React + Leaflet.js (Vercel/Netlify) |
-| Database | Firebase Firestore |
-| Notifications | Firebase Cloud Messaging |
+| Database | Supabase |
+| Notifications | Not configured in this repo |
 
 ## Dataset
 [RoadFix Dataset](https://universe.roboflow.com/dequillaprojects/roadfix) — 23,876 images, 4 classes, YOLOv11 format (Roboflow Universe, CC BY 4.0)
@@ -30,7 +30,7 @@ A real-time road anomaly detection system using a phone camera mounted on a car 
 
 ## Pipeline
 ```
-Phone Camera → Frame Extraction (1fps) → YOLOv11s Inference → Firebase → Dashboard + Notification
+Phone Camera -> Frame Extraction (1fps) -> YOLOv11s Inference -> Supabase Dashboard
 ```
 
 ## Getting Started

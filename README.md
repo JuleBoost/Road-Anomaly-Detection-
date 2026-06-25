@@ -1,6 +1,6 @@
 # 🚗 RoadSense — Road Anomaly Detection System
 
-A real-time road anomaly detection system using a phone camera mounted on a car dashboard. Runs YOLOv11s inference entirely in the browser to detect road hazards. Detections are stored in Firebase with GPS coordinates and sent as Telegram notifications via n8n automation.
+A real-time road anomaly detection system using a phone camera mounted on a car dashboard. Runs YOLOv11s inference entirely in the browser to detect road hazards. The dashboard now uses Supabase for anomaly and access management.
 
 ## Detected Anomalies
 - 🕳️ Pothole
@@ -15,7 +15,7 @@ A real-time road anomaly detection system using a phone camera mounted on a car 
 | Training | Google Colab T4 + Roboflow RoadFix dataset |
 | Inference | ONNX Runtime Web (browser-based, no backend) |
 | Frontend | React + Leaflet.js (Netlify) |
-| Database | Firebase Firestore |
+| Database | Supabase |
 | Notifications | n8n + Telegram Bot |
 
 ## Dataset
@@ -44,7 +44,7 @@ assets/        → Static assets
 
 ## Pipeline
 ```
-Phone Camera → ONNX Runtime Web (browser) → Firebase Firestore → React Dashboard + Telegram (n8n)
+Phone Camera -> ONNX Runtime Web (browser) -> Supabase Dashboard
 ```
 
 ## Mobile Prototype
@@ -53,10 +53,10 @@ Runs entirely in the browser — no Python or GPU required.
 - Load `best.onnx` when prompted
 - Use live camera or upload a video file
 - Auto-pauses on hazard detection
-- Detections saved directly to Firestore
+- Detection capture runs locally in the browser
 
 ## Notification System
-New Firestore entries in the `anomalies` collection trigger a Telegram message via an n8n polling workflow (no Firebase Cloud Functions required — works on free Spark plan).
+The current dashboard repository no longer includes legacy notification wiring.
 
 ## Getting Started
 

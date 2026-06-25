@@ -5,195 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>RoadSense — Hazard Vision | Pause on Detection</title>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js"></script>
-<!-- Firebase SDK (modular) -->
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import {
-    getFirestore,
-    collection,
-    addDoc,
-    doc,
-    getDocs,
-    updateDoc,
-    serverTimestamp
-  } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyC-sWBioNBiHdYU-qpRPNEL_d5kB4zNLVQ",
-    authDomain: "roadsense-864cc.firebaseapp.com",
-    projectId: "roadsense-864cc",
-    storageBucket: "roadsense-864cc.firebasestorage.app",
-    messagingSenderId: "63597794880",
-    appId: "1:63597794880:web:4c070d2614d50fa6f331a5"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-
-  const MUNICIPALITIES = [
-    {
-      id: "beirut",
-      name: "Beirut",
-      polygon: [
-        [35.4605, 33.8675],
-        [35.5485, 33.8675],
-        [35.5485, 33.9225],
-        [35.4605, 33.9225],
-        [35.4605, 33.8675],
-      ],
-    },
-    {
-      id: "baabda",
-      name: "Baabda",
-      polygon: [
-        [35.5005, 33.8005],
-        [35.6305, 33.8005],
-        [35.6305, 33.8905],
-        [35.5005, 33.8905],
-        [35.5005, 33.8005],
-      ],
-    },
-    {
-      id: "metn",
-      name: "Metn",
-      polygon: [
-        [35.5655, 33.9005],
-        [35.7355, 33.9005],
-        [35.7355, 34.0305],
-        [35.5655, 34.0305],
-        [35.5655, 33.9005],
-      ],
-    },
-  ];
-
-  function isPointInPolygon(point, polygon) {
-    const [lng, lat] = point;
-    let inside = false;
-
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      const [lngI, latI] = polygon[i];
-      const [lngJ, latJ] = polygon[j];
-      const intersects =
-        latI > lat !== latJ > lat &&
-        lng < ((lngJ - lngI) * (lat - latI)) / (latJ - latI) + lngI;
-
-      if (intersects) {
-        inside = !inside;
-      }
-    }
-
-    return inside;
-  }
-
-  function getMunicipality(lat, lng) {
-    for (const municipality of MUNICIPALITIES) {
-      if (isPointInPolygon([lng, lat], municipality.polygon)) {
-        return municipality.id;
-      }
-    }
-
-    return "unknown";
-  }
-
-  function normalizeAnomalyType(anomalyType) {
-    return anomalyType.toLowerCase().replace(/\s+/g, "-");
-  }
-
-  function calculateDistanceMeters(lat1, lng1, lat2, lng2) {
-    const toRadians = (value) => (value * Math.PI) / 180;
-    const earthRadiusMeters = 6371000;
-    const deltaLat = toRadians(lat2 - lat1);
-    const deltaLng = toRadians(lng2 - lng1);
-    const lat1Radians = toRadians(lat1);
-    const lat2Radians = toRadians(lat2);
-
-    const a =
-      Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
-      Math.cos(lat1Radians) *
-        Math.cos(lat2Radians) *
-        Math.sin(deltaLng / 2) *
-        Math.sin(deltaLng / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return earthRadiusMeters * c;
-  }
-
-  function isSameRoadIssue(existingAnomaly, normalizedAnomaly, lat, lng) {
-    const existingStatus = existingAnomaly.status || "New";
-    const existingAnomalyType = normalizeAnomalyType(existingAnomaly.anomaly || "");
-
-    if (existingAnomalyType !== normalizedAnomaly) {
-      return false;
-    }
-
-    if (existingStatus === "Repaired" || existingStatus === "Rejected") {
-      return false;
-    }
-
-    const distanceMeters = calculateDistanceMeters(
-      lat,
-      lng,
-      existingAnomaly.lat,
-      existingAnomaly.lng
-    );
-
-    return distanceMeters <= 10;
-  }
-
-  function findDuplicateAnomalyDoc(snapshot, normalizedAnomaly, lat, lng) {
-    return snapshot.docs.find((snapshotDoc) =>
-      isSameRoadIssue(snapshotDoc.data(), normalizedAnomaly, lat, lng)
-    );
-  }
-
-  window.addDetectionToFirestore = async (anomalyType, confidence, lat, lng, address) => {
-    try {
-      const municipalityId = getMunicipality(lat, lng);
-      const normalizedAnomaly = normalizeAnomalyType(anomalyType);
-      const anomaliesRef = collection(db, "anomalies");
-      const existingAnomaliesSnapshot = await getDocs(anomaliesRef);
-      const duplicateDoc = findDuplicateAnomalyDoc(
-        existingAnomaliesSnapshot,
-        normalizedAnomaly,
-        lat,
-        lng
-      );
-
-      if (duplicateDoc) {
-        const duplicateData = duplicateDoc.data();
-
-        await updateDoc(doc(db, "anomalies", duplicateDoc.id), {
-          reports_count: (duplicateData.reports_count || 1) + 1,
-          last_seen_at: new Date(),
-          confidence: Math.max(duplicateData.confidence || 0, confidence),
-          municipality_id: duplicateData.municipality_id || municipalityId,
-        });
-
-        console.log("âœ… Updated duplicate anomaly:", duplicateDoc.id);
-        return true;
-      }
-
-      const docRef = await addDoc(anomaliesRef, {
-        anomaly: normalizedAnomaly,
-        confidence: confidence,
-        lat: lat,
-        lng: lng,
-        address: address,
-        municipality_id: municipalityId,
-        reports_count: 1,
-        first_seen_at: new Date(),
-        last_seen_at: new Date(),
-        timestamp: serverTimestamp(),
-        device: "web"
-      });
-
-      console.log("✅ Saved to Firestore:", docRef.id);
-      return true;
-    } catch (err) {
-      console.error("❌ Firestore error:", err);
-      return false;
-    }
-  };
+  window.saveDetectionDisabled = true;
 </script>
 
 <style>
@@ -468,7 +281,7 @@
     <div id="det-list"><div id="no-det">NO ANOMALIES DETECTED</div></div>
   </div>
 </div>
-<div id="toast-msg" class="toast-notify">⚠️ Detection saved to Firebase</div>
+<div id="toast-msg" class="toast-notify">⚠️ Detection save is disabled</div>
 
 <script>
 // ── CONFIGURATION ──────────────────────────────────────────────────────────
@@ -645,42 +458,28 @@ async function reverseGeocode(lat, lng) {
   }
 }
 
-async function saveDetectionToFirebase(anomalyType, confidence) {
+async function handleDetectionSave(anomalyType, confidence) {
   const now = Date.now();
   if (now - lastSavedDetectionTime < SAVE_COOLDOWN_MS) {
-    console.log("Cooldown, skip save");
     return;
   }
   lastSavedDetectionTime = now;
 
   if (!navigator.geolocation) {
-    console.warn("Geolocation not supported");
-    showToast("❌ GPS not available");
     return;
   }
 
   navigator.geolocation.getCurrentPosition(async (position) => {
     const { latitude, longitude } = position.coords;
-    const address = await reverseGeocode(latitude, longitude);
-
-    if (window.addDetectionToFirestore) {
-      const success = await window.addDetectionToFirestore(
-        anomalyType,
-        confidence,
-        latitude,
-        longitude,
-        address
-      );
-
-      if (success) showToast(`✅ Saved: ${anomalyType} (${Math.round(confidence * 100)}%)`);
-      else showToast("❌ Failed to save");
-    } else {
-      console.error("Firestore not ready");
-      showToast("⚠️ Firebase not ready");
-    }
+    await reverseGeocode(latitude, longitude);
+    console.info("Detection captured locally:", {
+      anomalyType,
+      confidence,
+      latitude,
+      longitude,
+    });
   }, (err) => {
     console.error("Geolocation error:", err);
-    showToast("❌ Cannot get location");
   });
 }
 
@@ -768,7 +567,7 @@ async function runInference() {
       const anomalyType = CLASSES[best.classId];
       const confidence = best.score;
       console.log("Detected:", anomalyType, confidence);
-      saveDetectionToFirebase(anomalyType, confidence);
+      handleDetectionSave(anomalyType, confidence);
 
       if (!video.paused && !isUserPaused) {
         // auto-pause only if video is playing and not already manually paused
@@ -974,3 +773,5 @@ loadModel();
 </script>
 </body>
 </html>
+
+
