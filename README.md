@@ -57,7 +57,7 @@ Total: 30,000+ images across train/val/test splits.
 | Backend | Supabase (DB + Storage + Auth) |
 | Dashboard | React + Leaflet.js |
 | Deployment | Vercel |
-| Notifications | n8n + Telegram |
+
 
 ---
 
